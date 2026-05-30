@@ -120,7 +120,7 @@ def login():
 
     logger.info(f"LOGIN: redirect_uri={redirect_uri}")
 
-    scope = "pages_read_engagement,pages_read_user_content,pages_manage_posts,public_profile"
+    scope = "pages_read_engagement,pages_read_user_content,public_profile"
     auth_url = (
         f"https://www.facebook.com/v19.0/dialog/oauth"
         f"?client_id={APP_ID}"
