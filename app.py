@@ -19,6 +19,13 @@ PERMISSIONS = "pages_show_list,pages_read_engagement,pages_read_user_content"
 
 BETELGEUSE_PAGE_ID = "1057812024092361"
 
+# ⭐ NOVO: Token manual da página Betelgeuse (fallback quando OAuth não retorna a página)
+FACEBOOK_PAGE_TOKEN = os.environ.get("FACEBOOK_PAGE_TOKEN", "")
+
+logger.info(f"[CONFIG] APP_ID: {APP_ID}")
+logger.info(f"[CONFIG] BETELGEUSE_PAGE_ID: {BETELGEUSE_PAGE_ID}")
+logger.info(f"[CONFIG] FACEBOOK_PAGE_TOKEN: {'CONFIGURADO (modo manual)' if FACEBOOK_PAGE_TOKEN else 'NÃO CONFIGURADO (modo OAuth)'}")
+
 def get_redirect_uri():
     env_uri = os.environ.get("REDIRECT_URI")
     if env_uri:
@@ -308,6 +315,29 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
 
 def pages(tok):
     try:
+        # ⭐ MODO MANUAL: Se FACEBOOK_PAGE_TOKEN está configurado, retorna a página diretamente
+        if FACEBOOK_PAGE_TOKEN:
+            logger.info("[PAGES] Modo MANUAL ativo — usando FACEBOOK_PAGE_TOKEN")
+            # Valida o token manual chamando a API diretamente
+            r = requests.get(
+                f"{GRAPH}/{BETELGEUSE_PAGE_ID}",
+                params={"access_token": FACEBOOK_PAGE_TOKEN, "fields": "name,id,category"},
+                timeout=30
+            )
+            pg_data = r.json()
+            if "error" in pg_data:
+                logger.error(f"[PAGES] Token manual inválido: {pg_data['error']}")
+                return []
+            logger.info(f"[PAGES] Página validada via token manual: {pg_data.get('name')}")
+            return [{
+                "id": BETELGEUSE_PAGE_ID,
+                "name": pg_data.get("name", "Betelgeuse Servicos de TI"),
+                "category": pg_data.get("category", "Business"),
+                "access_token": FACEBOOK_PAGE_TOKEN,
+                "tasks": ["ADMINISTER", "EDIT_PROFILE", "CREATE_CONTENT", "MODERATE", "ADVERTISE", "ANALYZE"]
+            }]
+        
+        # ⭐ MODO OAUTH: Fluxo original (quando não há token manual)
         r = requests.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=30)
         data = r.json()
         logger.info(f"Pages API response keys: {list(data.keys())}")
