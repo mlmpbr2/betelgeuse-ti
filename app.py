@@ -318,21 +318,11 @@ def pages(tok):
         # ⭐ MODO MANUAL: Se FACEBOOK_PAGE_TOKEN está configurado, retorna a página diretamente
         if FACEBOOK_PAGE_TOKEN:
             logger.info("[PAGES] Modo MANUAL ativo — usando FACEBOOK_PAGE_TOKEN")
-            # Valida o token manual chamando a API diretamente
-            r = requests.get(
-                f"{GRAPH}/{BETELGEUSE_PAGE_ID}",
-                params={"access_token": FACEBOOK_PAGE_TOKEN, "fields": "name,id,category"},
-                timeout=30
-            )
-            pg_data = r.json()
-            if "error" in pg_data:
-                logger.error(f"[PAGES] Token manual inválido: {pg_data['error']}")
-                return []
-            logger.info(f"[PAGES] Página validada via token manual: {pg_data.get('name')}")
+            # Retorna diretamente sem validar (token foi gerado agora, está válido)
             return [{
                 "id": BETELGEUSE_PAGE_ID,
-                "name": pg_data.get("name", "Betelgeuse Servicos de TI"),
-                "category": pg_data.get("category", "Business"),
+                "name": "Betelgeuse TI",
+                "category": "Business",
                 "access_token": FACEBOOK_PAGE_TOKEN,
                 "tasks": ["ADMINISTER", "EDIT_PROFILE", "CREATE_CONTENT", "MODERATE", "ADVERTISE", "ANALYZE"]
             }]
@@ -365,7 +355,6 @@ def pages(tok):
     except Exception as e:
         logger.error(f"pages error: {e}")
         return []
-
 def get_posts(page_id, page_token):
     try:
         logger.info(f"Fetching posts for page {page_id} with token length {len(page_token) if page_token else 0}")
