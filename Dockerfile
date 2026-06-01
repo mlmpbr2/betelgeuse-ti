@@ -9,8 +9,15 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-# Instala dependências do sistema
-RUN apt-get update && apt-get install -y --no-install-recommends     gcc     libpq-dev     && rm -rf /var/lib/apt/lists/*
+# Instala dependências do sistema + SSL atualizado
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    libpq-dev \
+    ca-certificates \
+    openssl \
+    libssl-dev \
+    && update-ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Cria usuário não-root (requerido para Dev Mode no HF)
 RUN useradd -m -u 1000 user
