@@ -12,8 +12,10 @@ from urllib3.poolmanager import PoolManager
 # Forçar TLS 1.2 para conexão com Facebook
 class TLS12Adapter(HTTPAdapter):
     def init_poolmanager(self, *args, **kwargs):
-        kwargs['ssl_context'] = ssl.create_default_context()
-        kwargs['ssl_context'].minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx = ssl.create_default_context()
+        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # ⚠️ INSEGURO - só para teste!
         return super().init_poolmanager(*args, **kwargs)
 
 http_session = requests.Session()
