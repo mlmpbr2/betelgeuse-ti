@@ -4,6 +4,21 @@ from flask import Flask, redirect, request, session, render_template_string, sen
 from werkzeug.middleware.proxy_fix import ProxyFix
 import requests
 from datetime import datetime
+import ssl
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
+
+# Forçar TLS 1.2 para conexão com Facebook
+class TLS12Adapter(HTTPAdapter):
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs['ssl_context'] = ssl.create_default_context()
+        kwargs['ssl_context'].minimum_version = ssl.TLSVersion.TLSv1_2
+        return super().init_poolmanager(*args, **kwargs)
+
+session = requests.Session()
+session.mount('https://graph.facebook.com', TLS12Adapter())
+session.mount('https://www.facebook.com', TLS12Adapter())
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s', handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
@@ -328,7 +343,7 @@ def pages(tok):
             }]
         
         # ⭐ MODO OAUTH: Fluxo original (quando não há token manual)
-        r = requests.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=60)
+        r = session.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=60)
         data = r.json()
         logger.info(f"Pages API response keys: {list(data.keys())}")
         page_list = data.get("data", [])
@@ -338,11 +353,11 @@ def pages(tok):
         if not betelgeuse_found:
             logger.warning(f"Betelgeuse page (ID: {BETELGEUSE_PAGE_ID}) NOT found. Pages found: {len(page_list)}")
             try:
-                r2 = requests.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}", params={"access_token": tok, "fields": "name,id,category,access_token"}, timeout=60)
+                r2 = session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}", params={"access_token": tok, "fields": "name,id,category,access_token"}, timeout=60)
                 pg_data = r2.json()
                 logger.info(f"Direct page lookup result: {pg_data}")
                 if "error" not in pg_data and "name" in pg_data:
-                    r3 = requests.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}?fields=access_token", params={"access_token": tok}, timeout=60)
+                    r3 = session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}?fields=access_token", params={"access_token": tok}, timeout=60)
                     tok_data = r3.json()
                     page_token = tok_data.get("access_token", tok)
                     page_list.append({"id": pg_data.get("id", BETELGEUSE_PAGE_ID), "name": pg_data.get("name", "Betelgeuse Servicos de TI"), "category": pg_data.get("category", "Business"), "access_token": page_token})
@@ -358,7 +373,7 @@ def pages(tok):
 def get_posts(page_id, page_token):
     try:
         logger.info(f"Fetching posts for page {page_id} with token length {len(page_token) if page_token else 0}")
-        r = requests.get(f"{GRAPH}/{page_id}/posts", params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12}, timeout=60)
+        r = session.get(f"{GRAPH}/{page_id}/posts", params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12}, timeout=60)
         data = r.json()
         if "error" in data:
             err = data["error"]
@@ -376,7 +391,7 @@ def get_posts(page_id, page_token):
 def get_comments(post_id, page_token):
     try:
         logger.info(f"Fetching comments for post {post_id}")
-        r = requests.get(f"{GRAPH}/{post_id}/comments", params={"access_token": page_token, "fields": "id,from{name,id},message,created_time,like_count,attachment", "limit": 50}, timeout=60)
+        r = session.get(f"{GRAPH}/{post_id}/comments", params={"access_token": page_token, "fields": "id,from{name,id},message,created_time,like_count,attachment", "limit": 50}, timeout=60)
         data = r.json()
         if "error" in data:
             err = data["error"]
@@ -457,7 +472,7 @@ def cb():
         session["err_type"] = "error"
         return redirect("/")
     try:
-        r = requests.get(f"{GRAPH}/oauth/access_token", params={"client_id": APP_ID, "redirect_uri": redirect_uri, "client_secret": APP_SECRET, "code": code}, timeout=60)
+        r = session.get(f"{GRAPH}/oauth/access_token", params={"client_id": APP_ID, "redirect_uri": redirect_uri, "client_secret": APP_SECRET, "code": code}, timeout=60)
         data = r.json()
         logger.info(f"Token response keys: {list(data.keys())}")
         if "access_token" in data:
