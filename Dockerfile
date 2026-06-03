@@ -51,4 +51,4 @@ ENV HOME=/home/user
 ENV PATH=/home/user/.local/bin:$PATH
 
 # Comando de inicialização com Gunicorn (produção)
-CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "2", "--timeout", "60", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+CMD ["gunicorn", "--bind", "0.0.0.0:7860", "--workers", "2", "--timeout", "120", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
