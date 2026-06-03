@@ -35,6 +35,11 @@ COPY --chown=user . /app
 # Cria pasta assets se não existir
 RUN mkdir -p /app/assets
 
+# Forçar certificados SSL atualizados para Python/requests
+ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+ENV CURL_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
+
 # Porta exposta
 EXPOSE 7860
 
