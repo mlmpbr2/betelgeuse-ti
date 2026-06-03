@@ -3,24 +3,10 @@ import logging
 from flask import Flask, redirect, request, session, render_template_string, send_from_directory, jsonify
 from werkzeug.middleware.proxy_fix import ProxyFix
 import requests
-from datetime import datetime
-import ssl
-import requests
 from requests.adapters import HTTPAdapter
-from urllib3.poolmanager import PoolManager
-
-# Forçar TLS 1.2 para conexão com Facebook
-class TLS12Adapter(HTTPAdapter):
-    def init_poolmanager(self, *args, **kwargs):
-        ctx = ssl.create_default_context()
-        ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE  # ⚠️ INSEGURO - só para teste!
-        return super().init_poolmanager(*args, **kwargs)
-
-http_session = requests.Session()
-http_session.mount('https://graph.facebook.com', TLS12Adapter())
-http_session.mount('https://www.facebook.com', TLS12Adapter())
+from urllib3.util.retry import Retry
+import time
+from datetime import datetime
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s', handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
@@ -35,13 +21,6 @@ GRAPH = "https://graph.facebook.com/v19.0"
 PERMISSIONS = "pages_show_list,pages_read_engagement,pages_read_user_content"
 
 BETELGEUSE_PAGE_ID = "1057812024092361"
-
-# ⭐ NOVO: Token manual da página Betelgeuse (fallback quando OAuth não retorna a página)
-FACEBOOK_PAGE_TOKEN = os.environ.get("FACEBOOK_PAGE_TOKEN", "")
-
-logger.info(f"[CONFIG] APP_ID: {APP_ID}")
-logger.info(f"[CONFIG] BETELGEUSE_PAGE_ID: {BETELGEUSE_PAGE_ID}")
-logger.info(f"[CONFIG] FACEBOOK_PAGE_TOKEN: {'CONFIGURADO (modo manual)' if FACEBOOK_PAGE_TOKEN else 'NÃO CONFIGURADO (modo OAuth)'}")
 
 def get_redirect_uri():
     env_uri = os.environ.get("REDIRECT_URI")
@@ -330,101 +309,179 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
 </body>
 </html>"""
 
+
+def create_robust_session():
+    """Cria uma session HTTP com retry automatico para instabilidades de rede"""
+    session = requests.Session()
+    retry = Retry(
+        total=3,
+        backoff_factor=2,
+        status_forcelist=[500, 502, 503, 504, 429],
+        allowed_methods=["HEAD", "GET", "OPTIONS"]
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    session.mount("http://", adapter)
+    return session
+
 def pages(tok):
-    try:
-        # ⭐ MODO MANUAL: Se FACEBOOK_PAGE_TOKEN está configurado, retorna a página diretamente
-        if FACEBOOK_PAGE_TOKEN:
-            logger.info("[PAGES] Modo MANUAL ativo — usando FACEBOOK_PAGE_TOKEN")
-            # Retorna diretamente sem validar (token foi gerado agora, está válido)
-            return [{
-                "id": BETELGEUSE_PAGE_ID,
-                "name": "Betelgeuse TI",
-                "category": "Business",
-                "access_token": FACEBOOK_PAGE_TOKEN,
-                "tasks": ["ADMINISTER", "EDIT_PROFILE", "CREATE_CONTENT", "MODERATE", "ADVERTISE", "ANALYZE"]
-            }]
-        
-        # ⭐ MODO OAUTH: Fluxo original (quando não há token manual)
-        r = http_session.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=60)
-        data = r.json()
-        logger.info(f"Pages API response keys: {list(data.keys())}")
-        page_list = data.get("data", [])
-        for p in page_list:
-            logger.info(f"  -> Page: {p.get('name')} | ID: {p.get('id')} | Category: {p.get('category')} | Has token: {bool(p.get('access_token'))}")
-        betelgeuse_found = any(p.get("id") == BETELGEUSE_PAGE_ID for p in page_list)
-        if not betelgeuse_found:
-            logger.warning(f"Betelgeuse page (ID: {BETELGEUSE_PAGE_ID}) NOT found. Pages found: {len(page_list)}")
-            try:
-                r2 = get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}", params={"access_token": tok, "fields": "name,id,category,access_token"}, timeout=60)
-                pg_data = r2.json()
-                logger.info(f"Direct page lookup result: {pg_data}")
-                if "error" not in pg_data and "name" in pg_data:
-                    r3 = http_session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}?fields=access_token", params={"access_token": tok}, timeout=60)
-                    tok_data = r3.json()
-                    page_token = tok_data.get("access_token", tok)
-                    page_list.append({"id": pg_data.get("id", BETELGEUSE_PAGE_ID), "name": pg_data.get("name", "Betelgeuse Servicos de TI"), "category": pg_data.get("category", "Business"), "access_token": page_token})
-                    logger.info(f"Added Betelgeuse page manually with token: {bool(page_token)}")
-            except Exception as e:
-                logger.error(f"Failed to fetch Betelgeuse directly: {e}")
-        else:
-            logger.info(f"Betelgeuse page found in account list")
-        return page_list
-    except Exception as e:
-        logger.error(f"pages error: {e}")
-        return []
+    session = create_robust_session()
+    for attempt in range(3):
+        try:
+            logger.info(f"Fetching pages - attempt {attempt + 1}/3")
+            r = session.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=15)
+            data = r.json()
+            logger.info(f"Pages API response keys: {list(data.keys())}")
+            page_list = data.get("data", [])
+            for p in page_list:
+                logger.info(f"  -> Page: {p.get('name')} | ID: {p.get('id')} | Category: {p.get('category')} | Has token: {bool(p.get('access_token'))}")
+            betelgeuse_found = any(p.get("id") == BETELGEUSE_PAGE_ID for p in page_list)
+            if not betelgeuse_found:
+                logger.warning(f"Betelgeuse page (ID: {BETELGEUSE_PAGE_ID}) NOT found. Pages found: {len(page_list)}")
+                try:
+                    r2 = session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}", params={"access_token": tok, "fields": "name,id,category,access_token"}, timeout=15)
+                    pg_data = r2.json()
+                    logger.info(f"Direct page lookup result: {pg_data}")
+                    if "error" not in pg_data and "name" in pg_data:
+                        r3 = session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}?fields=access_token", params={"access_token": tok}, timeout=15)
+                        tok_data = r3.json()
+                        page_token = tok_data.get("access_token", tok)
+                        page_list.append({"id": pg_data.get("id", BETELGEUSE_PAGE_ID), "name": pg_data.get("name", "Betelgeuse Servicos de TI"), "category": pg_data.get("category", "Business"), "access_token": page_token})
+                        logger.info(f"Added Betelgeuse page manually with token: {bool(page_token)}")
+                except Exception as e:
+                    logger.error(f"Failed to fetch Betelgeuse directly: {e}")
+            else:
+                logger.info(f"Betelgeuse page found in account list")
+            return page_list
+        except requests.exceptions.SSLError as e:
+            logger.warning(f"SSL error on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            logger.error(f"pages SSL error after retries: {e}")
+            return []
+        except requests.exceptions.Timeout as e:
+            logger.warning(f"Timeout on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            logger.error(f"pages timeout after retries: {e}")
+            return []
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            logger.error(f"pages connection error after retries: {e}")
+            return []
+        except Exception as e:
+            logger.error(f"pages error: {e}")
+            return []
+    return []
+
 def get_posts(page_id, page_token):
-    try:
-        logger.info(f"Fetching posts for page {page_id} with token length {len(page_token) if page_token else 0}")
-        r = http_session.get(f"{GRAPH}/{page_id}/posts", params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12}, timeout=60)
-        data = r.json()
-        if "error" in data:
-            err = data["error"]
-            logger.error(f"Posts API error: {err}")
-            return [], err
-        posts = data.get("data", [])
-        logger.info(f"Found {len(posts)} posts")
-        for p in posts:
-            p["comments_count"] = p.get("comments", {}).get("summary", {}).get("total_count", "0")
-        return posts, None
-    except Exception as e:
-        logger.error(f"posts error: {e}")
-        return [], str(e)
+    session = create_robust_session()
+    for attempt in range(3):
+        try:
+            logger.info(f"Fetching posts for page {page_id} - attempt {attempt + 1}/3")
+            r = session.get(
+                f"{GRAPH}/{page_id}/posts",
+                params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12},
+                timeout=15
+            )
+            data = r.json()
+            if "error" in data:
+                err = data["error"]
+                logger.error(f"Posts API error: {err}")
+                return [], err
+            posts = data.get("data", [])
+            logger.info(f"Found {len(posts)} posts")
+            for p in posts:
+                p["comments_count"] = p.get("comments", {}).get("summary", {}).get("total_count", "0")
+            return posts, None
+        except requests.exceptions.SSLError as e:
+            logger.warning(f"SSL error on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "ssl_error"}
+        except requests.exceptions.Timeout as e:
+            logger.warning(f"Timeout on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "timeout_error"}
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "connection_error"}
+        except Exception as e:
+            logger.error(f"posts error: {e}")
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "unknown_error"}
+    return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "max_retries"}
 
 def get_comments(post_id, page_token):
-    try:
-        logger.info(f"Fetching comments for post {post_id}")
-        r = http_session.get(f"{GRAPH}/{post_id}/comments", params={"access_token": page_token, "fields": "id,from{name,id},message,created_time,like_count,attachment", "limit": 50}, timeout=60)
-        data = r.json()
-        if "error" in data:
-            err = data["error"]
-            logger.error(f"Comments API error: {err}")
-            return [], err
-        raw = data.get("data", [])
-        logger.info(f"Found {len(raw)} comments")
-        neg_kw = ["reclamacao","problema","ruim","pessimo","demora","atraso","erro","insatisfeito","complaint","bad","terrible","delay","wrong","issue","problem","slow","error","fail","broken","worst","hate","angry","horrivel","decepcionado","frustrado","nao funciona","bug","crash","lento","caro","roubo","golpe","fraud"]
-        processed = []
-        for c in raw:
-            msg = c.get("message", "")
-            author = c.get("from", {})
-            created = c.get("created_time", "")
-            time_ago = ""
-            if created:
-                try:
-                    dt = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S")
-                    delta = datetime.utcnow() - dt
-                    if delta.days > 0:
-                        time_ago = f"{delta.days}d atras"
-                    elif delta.seconds > 3600:
-                        time_ago = f"{delta.seconds//3600}h atras"
-                    else:
-                        time_ago = f"{delta.seconds//60}min atras"
-                except:
-                    time_ago = created[:10]
-            processed.append({"id": c.get("id"), "author_name": author.get("name", "Usuario do Facebook"), "author_id": author.get("id", ""), "message": msg or "(sem texto)", "created_time": created[:10] if created else "Data desconhecida", "like_count": c.get("like_count", 0), "is_negative": any(kw in msg.lower() for kw in neg_kw), "time_ago": time_ago})
-        return processed, None
-    except Exception as e:
-        logger.error(f"comments error: {e}")
-        return [], str(e)
+    session = create_robust_session()
+    for attempt in range(3):
+        try:
+            logger.info(f"Fetching comments for post {post_id} - attempt {attempt + 1}/3")
+            r = session.get(
+                f"{GRAPH}/{post_id}/comments",
+                params={"access_token": page_token, "fields": "id,from{name,id},message,created_time,like_count,attachment", "limit": 50},
+                timeout=15
+            )
+            data = r.json()
+            if "error" in data:
+                err = data["error"]
+                logger.error(f"Comments API error: {err}")
+                return [], err
+            raw = data.get("data", [])
+            logger.info(f"Found {len(raw)} comments")
+            neg_kw = ["reclamacao","problema","ruim","pessimo","demora","atraso","erro","insatisfeito","complaint","bad","terrible","delay","wrong","issue","problem","slow","error","fail","broken","worst","hate","angry","horrivel","decepcionado","frustrado","nao funciona","bug","crash","lento","caro","roubo","golpe","fraud"]
+            processed = []
+            for c in raw:
+                msg = c.get("message", "")
+                author = c.get("from", {})
+                created = c.get("created_time", "")
+                time_ago = ""
+                if created:
+                    try:
+                        dt = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S")
+                        delta = datetime.utcnow() - dt
+                        if delta.days > 0:
+                            time_ago = f"{delta.days}d atras"
+                        elif delta.seconds > 3600:
+                            time_ago = f"{delta.seconds//3600}h atras"
+                        else:
+                            time_ago = f"{delta.seconds//60}min atras"
+                    except:
+                        time_ago = created[:10]
+                processed.append({"id": c.get("id"), "author_name": author.get("name", "Usuario do Facebook"), "author_id": author.get("id", ""), "message": msg or "(sem texto)", "created_time": created[:10] if created else "Data desconhecida", "like_count": c.get("like_count", 0), "is_negative": any(kw in msg.lower() for kw in neg_kw), "time_ago": time_ago})
+            return processed, None
+        except requests.exceptions.SSLError as e:
+            logger.warning(f"SSL error on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "ssl_error"}
+        except requests.exceptions.Timeout as e:
+            logger.warning(f"Timeout on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "timeout_error"}
+        except requests.exceptions.ConnectionError as e:
+            logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+                continue
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "connection_error"}
+        except Exception as e:
+            logger.error(f"comments error: {e}")
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "unknown_error"}
+    return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "max_retries"}
 
 @app.route("/")
 def home():
@@ -474,7 +531,7 @@ def cb():
         session["err_type"] = "error"
         return redirect("/")
     try:
-        r = http_session.get(f"{GRAPH}/oauth/access_token", params={"client_id": APP_ID, "redirect_uri": redirect_uri, "client_secret": APP_SECRET, "code": code}, timeout=60)
+        r = requests.get(f"{GRAPH}/oauth/access_token", params={"client_id": APP_ID, "redirect_uri": redirect_uri, "client_secret": APP_SECRET, "code": code}, timeout=30)
         data = r.json()
         logger.info(f"Token response keys: {list(data.keys())}")
         if "access_token" in data:
