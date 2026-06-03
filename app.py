@@ -311,15 +311,10 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
 
 
 def create_robust_session():
-    """Cria uma session HTTP com retry automatico para instabilidades de rede"""
+    """Cria uma session HTTP SEM retry do urllib3 (evita loops de SSL)"""
     session = requests.Session()
-    retry = Retry(
-        total=3,
-        backoff_factor=2,
-        status_forcelist=[500, 502, 503, 504, 429],
-        allowed_methods=["HEAD", "GET", "OPTIONS"]
-    )
-    adapter = HTTPAdapter(max_retries=retry)
+    # DESATIVAR retry do urllib3 - causa loops de SSL handshake
+    adapter = HTTPAdapter(max_retries=0)
     session.mount("https://", adapter)
     session.mount("http://", adapter)
     return session
@@ -329,7 +324,8 @@ def pages(tok):
     for attempt in range(3):
         try:
             logger.info(f"Fetching pages - attempt {attempt + 1}/3")
-            r = session.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=15)
+            # Timeout CURTO: 5s para nao travar o worker
+            r = session.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=5)
             data = r.json()
             logger.info(f"Pages API response keys: {list(data.keys())}")
             page_list = data.get("data", [])
@@ -339,11 +335,11 @@ def pages(tok):
             if not betelgeuse_found:
                 logger.warning(f"Betelgeuse page (ID: {BETELGEUSE_PAGE_ID}) NOT found. Pages found: {len(page_list)}")
                 try:
-                    r2 = session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}", params={"access_token": tok, "fields": "name,id,category,access_token"}, timeout=15)
+                    r2 = session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}", params={"access_token": tok, "fields": "name,id,category,access_token"}, timeout=5)
                     pg_data = r2.json()
                     logger.info(f"Direct page lookup result: {pg_data}")
                     if "error" not in pg_data and "name" in pg_data:
-                        r3 = session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}?fields=access_token", params={"access_token": tok}, timeout=15)
+                        r3 = session.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}?fields=access_token", params={"access_token": tok}, timeout=5)
                         tok_data = r3.json()
                         page_token = tok_data.get("access_token", tok)
                         page_list.append({"id": pg_data.get("id", BETELGEUSE_PAGE_ID), "name": pg_data.get("name", "Betelgeuse Servicos de TI"), "category": pg_data.get("category", "Business"), "access_token": page_token})
@@ -353,29 +349,16 @@ def pages(tok):
             else:
                 logger.info(f"Betelgeuse page found in account list")
             return page_list
-        except requests.exceptions.SSLError as e:
-            logger.warning(f"SSL error on attempt {attempt + 1}: {e}")
+        except (requests.exceptions.SSLError, requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            logger.warning(f"Network error on attempt {attempt + 1}/3: {type(e).__name__}: {str(e)[:80]}")
             if attempt < 2:
-                time.sleep(2 ** attempt)
+                time.sleep(1)  # Sleep LEVE de 1s apenas
                 continue
-            logger.error(f"pages SSL error after retries: {e}")
-            return []
-        except requests.exceptions.Timeout as e:
-            logger.warning(f"Timeout on attempt {attempt + 1}: {e}")
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            logger.error(f"pages timeout after retries: {e}")
-            return []
-        except requests.exceptions.ConnectionError as e:
-            logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            logger.error(f"pages connection error after retries: {e}")
+            # Ultima tentativa falhou - retorna lista vazia com log
+            logger.error(f"All 3 attempts failed for pages(): {type(e).__name__}")
             return []
         except Exception as e:
-            logger.error(f"pages error: {e}")
+            logger.error(f"Unexpected pages error: {e}")
             return []
     return []
 
@@ -387,7 +370,7 @@ def get_posts(page_id, page_token):
             r = session.get(
                 f"{GRAPH}/{page_id}/posts",
                 params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12},
-                timeout=15
+                timeout=5
             )
             data = r.json()
             if "error" in data:
@@ -399,26 +382,15 @@ def get_posts(page_id, page_token):
             for p in posts:
                 p["comments_count"] = p.get("comments", {}).get("summary", {}).get("total_count", "0")
             return posts, None
-        except requests.exceptions.SSLError as e:
-            logger.warning(f"SSL error on attempt {attempt + 1}: {e}")
+        except (requests.exceptions.SSLError, requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            logger.warning(f"Network error on attempt {attempt + 1}/3: {type(e).__name__}: {str(e)[:80]}")
             if attempt < 2:
-                time.sleep(2 ** attempt)
+                time.sleep(1)
                 continue
-            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "ssl_error"}
-        except requests.exceptions.Timeout as e:
-            logger.warning(f"Timeout on attempt {attempt + 1}: {e}")
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "timeout_error"}
-        except requests.exceptions.ConnectionError as e:
-            logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "connection_error"}
+            logger.error(f"All 3 attempts failed for get_posts(): {type(e).__name__}")
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "network_error"}
         except Exception as e:
-            logger.error(f"posts error: {e}")
+            logger.error(f"Unexpected posts error: {e}")
             return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "unknown_error"}
     return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "max_retries"}
 
@@ -430,7 +402,7 @@ def get_comments(post_id, page_token):
             r = session.get(
                 f"{GRAPH}/{post_id}/comments",
                 params={"access_token": page_token, "fields": "id,from{name,id},message,created_time,like_count,attachment", "limit": 50},
-                timeout=15
+                timeout=5
             )
             data = r.json()
             if "error" in data:
@@ -460,26 +432,15 @@ def get_comments(post_id, page_token):
                         time_ago = created[:10]
                 processed.append({"id": c.get("id"), "author_name": author.get("name", "Usuario do Facebook"), "author_id": author.get("id", ""), "message": msg or "(sem texto)", "created_time": created[:10] if created else "Data desconhecida", "like_count": c.get("like_count", 0), "is_negative": any(kw in msg.lower() for kw in neg_kw), "time_ago": time_ago})
             return processed, None
-        except requests.exceptions.SSLError as e:
-            logger.warning(f"SSL error on attempt {attempt + 1}: {e}")
+        except (requests.exceptions.SSLError, requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            logger.warning(f"Network error on attempt {attempt + 1}/3: {type(e).__name__}: {str(e)[:80]}")
             if attempt < 2:
-                time.sleep(2 ** attempt)
+                time.sleep(1)
                 continue
-            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "ssl_error"}
-        except requests.exceptions.Timeout as e:
-            logger.warning(f"Timeout on attempt {attempt + 1}: {e}")
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "timeout_error"}
-        except requests.exceptions.ConnectionError as e:
-            logger.warning(f"Connection error on attempt {attempt + 1}: {e}")
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-                continue
-            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "connection_error"}
+            logger.error(f"All 3 attempts failed for get_comments(): {type(e).__name__}")
+            return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "network_error"}
         except Exception as e:
-            logger.error(f"comments error: {e}")
+            logger.error(f"Unexpected comments error: {e}")
             return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "unknown_error"}
     return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "max_retries"}
 
