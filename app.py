@@ -3,7 +3,7 @@ import logging
 from flask import Flask, redirect, request, session, render_template_string, send_from_directory, jsonify
 from werkzeug.middleware.proxy_fix import ProxyFix
 import requests
-from datetime import datetime
+from datetime import datetime, timedelta
 
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s', handlers=[logging.StreamHandler()])
 logger = logging.getLogger(__name__)
@@ -18,6 +18,56 @@ GRAPH = "https://graph.facebook.com/v19.0"
 PERMISSIONS = "pages_show_list,pages_read_engagement,pages_read_user_content"
 
 BETELGEUSE_PAGE_ID = "1057812024092361"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CACHE EM MEMORIA - TOLERANCIA A FALHAS DO HF
+# ═══════════════════════════════════════════════════════════════════════════
+_cache = {
+    "pages": None,           # Lista de paginas
+    "pages_time": None,      # Timestamp do cache
+    "posts": {},             # {page_id: [posts]}
+    "posts_time": {},        # {page_id: timestamp}
+    "comments": {},          # {post_id: [comments]}
+    "comments_time": {},     # {post_id: timestamp}
+}
+CACHE_TTL = 300  # 5 minutos de validade do cache
+
+def get_cache(key, subkey=None):
+    """Retorna dados do cache se ainda forem validos"""
+    now = datetime.utcnow()
+    if subkey:
+        data = _cache.get(key, {}).get(subkey)
+        ts = _cache.get(f"{key}_time", {}).get(subkey)
+        if data and ts and (now - ts).seconds < CACHE_TTL:
+            logger.info(f"CACHE HIT: {key}/{subkey}")
+            return data
+    else:
+        data = _cache.get(key)
+        ts = _cache.get(f"{key}_time")
+        if data and ts and (now - ts).seconds < CACHE_TTL:
+            logger.info(f"CACHE HIT: {key}")
+            return data
+    return None
+
+def set_cache(key, value, subkey=None):
+    """Salva dados no cache"""
+    now = datetime.utcnow()
+    if subkey:
+        if key not in _cache:
+            _cache[key] = {}
+            _cache[f"{key}_time"] = {}
+        _cache[key][subkey] = value
+        _cache[f"{key}_time"][subkey] = now
+    else:
+        _cache[key] = value
+        _cache[f"{key}_time"] = now
+    logger.info(f"CACHE SET: {key}{'/' + subkey if subkey else ''}")
+
+def is_cache_fresh(key, subkey=None):
+    """Verifica se o cache existe e eh valido"""
+    return get_cache(key, subkey) is not None
+
+# ═══════════════════════════════════════════════════════════════════════════
 
 def get_redirect_uri():
     env_uri = os.environ.get("REDIRECT_URI")
@@ -163,6 +213,7 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
 .footer{text-align:center;margin-top:48px;padding:28px 0;border-top:2px solid var(--gray-200);color:var(--gray-500);font-size:13px}
 .footer a{color:var(--primary);text-decoration:none;font-weight:600;margin:0 8px}
 .footer a:hover{text-decoration:underline}
+.cache-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:20px;font-size:11px;font-weight:700;background:#fff3e0;color:#e65100;margin-left:10px}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .fade-in{animation:fadeIn .4s ease-out}
 @media(max-width:768px){
@@ -232,7 +283,7 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
     <span class="step-arrow"><i class="fas fa-chevron-right"></i></span>
     <div class="step {% if comments is not none %}done{% endif %}"><div class="step-num {% if comments is not none %}done{% endif %}">3</div><span class="step-label">Moderar Comentarios</span></div>
   </div>
-  <div class="card-header"><div><div class="card-title"><i class="fas fa-flag"></i> Escolha sua Pagina</div><div class="card-subtitle">Permissao: <span class="badge badge-std">pages_show_list</span></div></div></div>
+  <div class="card-header"><div><div class="card-title"><i class="fas fa-flag"></i> Escolha sua Pagina {% if from_cache_pages %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permissao: <span class="badge badge-std">pages_show_list</span></div></div></div>
   <form><div class="form-group"><label class="form-label"><i class="fas fa-list" style="margin-right:6px;color:var(--primary)"></i>Pagina do Facebook</label><select name="page" onchange="this.form.submit()"><option value="">- Selecione uma Pagina -</option>{% for p in pages %}<option value="{{p.id}}|{{p.access_token}}" {% if sel and sel.startswith(p.id|string) %}selected{% endif %}>{{p.name}} {% if p.category %}({{p.category}}){% endif %}</option>{% endfor %}</select></div></form>
   <p class="muted" style="margin-top:12px"><i class="fas fa-info-circle" style="margin-right:6px"></i>{{pages|length}} Pagina(s) encontrada(s)</p>
   {% if betelgeuse_missing %}
@@ -244,7 +295,7 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
 </div>
 {% if posts is not none %}
 <div class="card fade-in">
-  <div class="card-header"><div><div class="card-title"><i class="fas fa-newspaper"></i> Escolha uma Publicacao</div><div class="card-subtitle">Permissao: <span class="badge badge-adv">pages_read_engagement</span></div></div></div>
+  <div class="card-header"><div><div class="card-title"><i class="fas fa-newspaper"></i> Escolha uma Publicacao {% if from_cache_posts %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permissao: <span class="badge badge-adv">pages_read_engagement</span></div></div></div>
   {% if posts %}
   <div class="post-grid">
     {% for po in posts %}
@@ -263,7 +314,7 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
 {% endif %}
 {% if comments is not none %}
 <div class="card fade-in">
-  <div class="card-header"><div><div class="card-title"><i class="fas fa-comments"></i> Moderar Comentarios</div><div class="card-subtitle">Permissao: <span class="badge badge-sens">pages_read_user_content</span></div></div></div>
+  <div class="card-header"><div><div class="card-title"><i class="fas fa-comments"></i> Moderar Comentarios {% if from_cache_comments %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permissao: <span class="badge badge-sens">pages_read_user_content</span></div></div></div>
   {% if selected_post %}
   <div class="post-banner"><i class="fas fa-newspaper"></i><div class="post-banner-content"><div class="post-banner-title">{{selected_post.message[:200] if selected_post.message else '(Publicacao com midia)'}}</div><div class="post-banner-meta"><i class="far fa-calendar-alt" style="margin-right:6px"></i>{{selected_post.created_time[:10] if selected_post.created_time else 'Data desconhecida'}}</div></div></div>
   {% endif %}
@@ -307,6 +358,9 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
 </html>"""
 
 def pages(tok):
+    # Tenta cache primeiro
+    cached = get_cache("pages")
+
     try:
         r = requests.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=30)
         data = r.json()
@@ -314,6 +368,10 @@ def pages(tok):
         page_list = data.get("data", [])
         for p in page_list:
             logger.info(f"  -> Page: {p.get('name')} | ID: {p.get('id')} | Category: {p.get('category')} | Has token: {bool(p.get('access_token'))}")
+
+        # Salva no cache
+        set_cache("pages", page_list)
+
         betelgeuse_found = any(p.get("id") == BETELGEUSE_PAGE_ID for p in page_list)
         if not betelgeuse_found:
             logger.warning(f"Betelgeuse page (ID: {BETELGEUSE_PAGE_ID}) NOT found. Pages found: {len(page_list)}")
@@ -327,6 +385,8 @@ def pages(tok):
                     page_token = tok_data.get("access_token", tok)
                     page_list.append({"id": pg_data.get("id", BETELGEUSE_PAGE_ID), "name": pg_data.get("name", "Betelgeuse Servicos de TI"), "category": pg_data.get("category", "Business"), "access_token": page_token})
                     logger.info(f"Added Betelgeuse page manually with token: {bool(page_token)}")
+                    # Atualiza cache com Betelgeuse
+                    set_cache("pages", page_list)
             except Exception as e:
                 logger.error(f"Failed to fetch Betelgeuse directly: {e}")
         else:
@@ -334,9 +394,15 @@ def pages(tok):
         return page_list
     except Exception as e:
         logger.error(f"pages error: {e}")
+        # RETORNA CACHE se existir
+        if cached:
+            logger.info("Returning cached pages due to error")
+            return cached
         return []
 
 def get_posts(page_id, page_token):
+    cached = get_cache("posts", page_id)
+
     try:
         logger.info(f"Fetching posts for page {page_id} with token length {len(page_token) if page_token else 0}")
         r = requests.get(f"{GRAPH}/{page_id}/posts", params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12}, timeout=30)
@@ -349,12 +415,20 @@ def get_posts(page_id, page_token):
         logger.info(f"Found {len(posts)} posts")
         for p in posts:
             p["comments_count"] = p.get("comments", {}).get("summary", {}).get("total_count", "0")
+        # Salva no cache
+        set_cache("posts", posts, page_id)
         return posts, None
     except Exception as e:
         logger.error(f"posts error: {e}")
+        # RETORNA CACHE se existir
+        if cached:
+            logger.info("Returning cached posts due to error")
+            return cached, {"message": "O Hugging Face esta com instabilidade momentanea - Dados em cache podem estar desatualizados", "type": "network_error", "from_cache": True}
         return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "network_error"}
 
 def get_comments(post_id, page_token):
+    cached = get_cache("comments", post_id)
+
     try:
         logger.info(f"Fetching comments for post {post_id}")
         r = requests.get(f"{GRAPH}/{post_id}/comments", params={"access_token": page_token, "fields": "id,from{name,id},message,created_time,like_count,attachment", "limit": 50}, timeout=30)
@@ -385,9 +459,15 @@ def get_comments(post_id, page_token):
                 except:
                     time_ago = created[:10]
             processed.append({"id": c.get("id"), "author_name": author.get("name", "Usuario do Facebook"), "author_id": author.get("id", ""), "message": msg or "(sem texto)", "created_time": created[:10] if created else "Data desconhecida", "like_count": c.get("like_count", 0), "is_negative": any(kw in msg.lower() for kw in neg_kw), "time_ago": time_ago})
+        # Salva no cache
+        set_cache("comments", processed, post_id)
         return processed, None
     except Exception as e:
         logger.error(f"comments error: {e}")
+        # RETORNA CACHE se existir
+        if cached:
+            logger.info("Returning cached comments due to error")
+            return cached, {"message": "O Hugging Face esta com instabilidade momentanea - Dados em cache podem estar desatualizados", "type": "network_error", "from_cache": True}
         return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "network_error"}
 
 @app.route("/")
@@ -396,19 +476,29 @@ def home():
     sel = request.args.get("page")
     pgs = pages(tok) if tok else []
     betelgeuse_missing = tok and not any(p.get("id") == BETELGEUSE_PAGE_ID for p in pgs)
+
+    from_cache_pages = is_cache_fresh("pages") and pgs == get_cache("pages")
+
     pst = None
+    from_cache_posts = False
     if sel and "|" in sel:
         pid, pt = sel.split("|", 1)
         pst, err = get_posts(pid, pt)
         if err:
             err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-            session["err"] = f"Nao foi possivel carregar as publicacoes: {err_msg}"
-            session["err_type"] = "error"
-            return redirect("/")
+            from_cache_posts = err.get("from_cache", False)
+            if from_cache_posts:
+                session["err"] = err_msg
+                session["err_type"] = "warning"
+            else:
+                session["err"] = f"Nao foi possivel carregar as publicacoes: {err_msg}"
+                session["err_type"] = "error"
+                return redirect("/")
+
     alert = session.pop("err", None)
     alert_type = session.pop("err_type", "error")
     debug = f"Host: {request.headers.get('Host','N/A')}\nX-Forwarded-Host: {request.headers.get('X-Forwarded-Host','N/A')}\nX-Forwarded-Proto: {request.headers.get('X-Forwarded-Proto','N/A')}\nPages found: {len(pgs)}\nBetelgeuse missing: {betelgeuse_missing}"
-    return render_template_string(HTML, token=tok, pages=pgs, posts=pst, sel=sel, post_id=None, comments=None, selected_post=None, alert=alert, alert_type=alert_type, total_likes=0, negative_count=0, debug_info=debug, betelgeuse_missing=betelgeuse_missing, betelgeuse_id=BETELGEUSE_PAGE_ID)
+    return render_template_string(HTML, token=tok, pages=pgs, posts=pst, sel=sel, post_id=None, comments=None, selected_post=None, alert=alert, alert_type=alert_type, total_likes=0, negative_count=0, debug_info=debug, betelgeuse_missing=betelgeuse_missing, betelgeuse_id=BETELGEUSE_PAGE_ID, from_cache_pages=from_cache_pages, from_cache_posts=from_cache_posts, from_cache_comments=False)
 
 @app.route("/login")
 def login():
@@ -466,19 +556,34 @@ def cm():
     pid, pt = pg.split("|", 1)
     pst, _ = get_posts(pid, pt)
     comments, err = get_comments(post_id, pt)
+
+    from_cache_comments = False
     if err:
         err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
-        session["err"] = f"Nao foi possivel carregar os comentarios: {err_msg}"
-        return redirect(f"/?page={pg}")
+        from_cache_comments = err.get("from_cache", False)
+        if from_cache_comments:
+            session["err"] = err_msg
+            session["err_type"] = "warning"
+        else:
+            session["err"] = f"Nao foi possivel carregar os comentarios: {err_msg}"
+            return redirect(f"/?page={pg}")
+
     selected_post = next((p for p in pst if p["id"] == post_id), None)
     total_likes = sum(c["like_count"] for c in comments)
     negative_count = sum(1 for c in comments if c["is_negative"])
-    return render_template_string(HTML, token=session.get("tok"), pages=pages(session.get("tok")), posts=pst, sel=pg, post_id=post_id, comments=comments, selected_post=selected_post, alert=None, alert_type="info", total_likes=total_likes, negative_count=negative_count, debug_info=None, betelgeuse_missing=False, betelgeuse_id=BETELGEUSE_PAGE_ID)
+    return render_template_string(HTML, token=session.get("tok"), pages=pages(session.get("tok")), posts=pst, sel=pg, post_id=post_id, comments=comments, selected_post=selected_post, alert=None, alert_type="info", total_likes=total_likes, negative_count=negative_count, debug_info=None, betelgeuse_missing=False, betelgeuse_id=BETELGEUSE_PAGE_ID, from_cache_pages=False, from_cache_posts=False, from_cache_comments=from_cache_comments)
 
 @app.route("/logout")
 def out():
     tok = session.pop("tok", None)
     session.clear()
+    # Limpa cache ao fazer logout
+    _cache["pages"] = None
+    _cache["pages_time"] = None
+    _cache["posts"] = {}
+    _cache["posts_time"] = {}
+    _cache["comments"] = {}
+    _cache["comments_time"] = {}
     return redirect(f"https://www.facebook.com/logout.php?next=https://mlmpbr-betelgeuse-api.hf.space/&access_token={tok or ''}")
 
 PRIVACY_HTML = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Politica de Privacidade - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#e7f3ff;color:#1877f2;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}</style></head><body><h1>Politica de Privacidade</h1><p><span class="badge">Atualizado: 30 de maio de 2026</span></p><p><strong>Betelgeuse Servicos de TI</strong> - CNPJ 51.770.524/0001-87</p><h2>1. Informacoes que Processamos</h2><p>Nosso aplicativo processa os seguintes dados <strong>apenas em tempo real</strong>:</p><ul><li>Nomes e IDs de Paginas do Facebook que voce administra (via <code>pages_show_list</code>)</li><li>Conteudo de publicacoes, IDs e datas de criacao (via <code>pages_read_engagement</code>)</li><li>Nomes de autores, IDs de autores, texto de comentarios, datas de criacao e contagem de curtidas (via <code>pages_read_user_content</code>)</li></ul><h2>2. Nenhum Armazenamento de Dados</h2><p><strong>Nao armazenamos, persistimos ou retemos nenhum dado do usuario em nossos servidores.</strong> Todos os dados sao obtidos diretamente da API Graph do Facebook e exibidos na sua sessao do navegador.</p><h2>3. Retencao de Dados</h2><p>Os dados sao retidos apenas durante a duracao da sua sessao ativa (tipicamente menos de 30 minutos).</p><h2>4. Compartilhamento de Dados</h2><p>Nao compartilhamos, vendemos, alugamos ou transferimos dados do usuario para terceiros. Nao usamos dados de comentarios para treinar modelos de IA.</p><h2>5. Seus Direitos</h2><p>Voce tem o direito de:</p><ul><li>Revogar permissoes do aplicativo a qualquer momento via <a href="https://www.facebook.com/settings?tab=applications" target="_blank">Configuracoes do Facebook -> Aplicativos</a></li><li>Solicitar exclusao de qualquer dado de sessao em cache via nossa pagina de <a href="/delete">Exclusao de Dados</a></li><li>Entrar em contato pelo e-mail <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></li></ul><h2>6. Contato</h2><p>Betelgeuse Servicos de TI<br>CNPJ: 51.770.524/0001-87<br>E-mail: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a><br>Endereco: Navegantes, SC, Brasil</p><div class="footer">&copy; 2026 Betelgeuse Servicos de TI - <a href="/">Voltar ao App</a> - <a href="/terms">Termos</a> - <a href="/delete">Exclusao de Dados</a></div></body></html>"""
@@ -507,7 +612,7 @@ def data_use():
 
 @app.route("/health")
 def health():
-    return jsonify({"status":"ok","service":"betelgeuse-comment-moderator","version":"3.2","page_id":BETELGEUSE_PAGE_ID})
+    return jsonify({"status":"ok","service":"betelgeuse-comment-moderator","version":"3.3","page_id":BETELGEUSE_PAGE_ID})
 
 if __name__=="__main__":
     app.run(host="0.0.0.0",port=7860)
