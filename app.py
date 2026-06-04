@@ -18,6 +18,8 @@ GRAPH = "https://graph.facebook.com/v19.0"
 PERMISSIONS = "pages_show_list,pages_read_engagement,pages_read_user_content"
 
 BETELGEUSE_PAGE_ID = "1057812024092361"
+# Page Access Token manual da Betelgeuse (fallback quando nao aparece em /me/accounts)
+BETELGEUSE_PAGE_TOKEN = "EAAMeRanis2QBRpittquvwtS9K1urmHzBWiiCqvK2wSZBBjjaFWP4dnz9TuAb61D8zixTWgB2pFqOvZBTpCXiRgYKQBM9ZAFKmaoIYIPtyj43nNEPOZBSBiyXTDXCdnOFvcPTFfn814ZAdwsksqGHCIZBnCgAurXsQaqF2N4WwRpTvgvHiJIx3XX32qwUpMS9g7qmKu717uRptTvI6UdpiyMZBMEFYQTTwJO8ZBML6JKTIhZApWGRyJ7AmZAQaHm05okfDVhWoA4rYNuOrZAtdQ6c71gcVuVOP0zaNApRGm3oQZDZD"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CACHE EM MEMORIA - TOLERANCIA A FALHAS DO HF
@@ -374,21 +376,17 @@ def pages(tok):
 
         betelgeuse_found = any(p.get("id") == BETELGEUSE_PAGE_ID for p in page_list)
         if not betelgeuse_found:
-            logger.warning(f"Betelgeuse page (ID: {BETELGEUSE_PAGE_ID}) NOT found. Pages found: {len(page_list)}")
-            try:
-                r2 = requests.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}", params={"access_token": tok, "fields": "name,id,category,access_token"}, timeout=30)
-                pg_data = r2.json()
-                logger.info(f"Direct page lookup result: {pg_data}")
-                if "error" not in pg_data and "name" in pg_data:
-                    r3 = requests.get(f"{GRAPH}/{BETELGEUSE_PAGE_ID}?fields=access_token", params={"access_token": tok}, timeout=30)
-                    tok_data = r3.json()
-                    page_token = tok_data.get("access_token", tok)
-                    page_list.append({"id": pg_data.get("id", BETELGEUSE_PAGE_ID), "name": pg_data.get("name", "Betelgeuse Servicos de TI"), "category": pg_data.get("category", "Business"), "access_token": page_token})
-                    logger.info(f"Added Betelgeuse page manually with token: {bool(page_token)}")
-                    # Atualiza cache com Betelgeuse
-                    set_cache("pages", page_list)
-            except Exception as e:
-                logger.error(f"Failed to fetch Betelgeuse directly: {e}")
+            logger.warning(f"Betelgeuse page (ID: {BETELGEUSE_PAGE_ID}) NOT found in /me/accounts. Pages found: {len(page_list)}")
+            # FALLBACK: usar Page Access Token manual
+            logger.info("Using BETELGEUSE_PAGE_TOKEN as fallback")
+            page_list.append({
+                "id": BETELGEUSE_PAGE_ID,
+                "name": "Betelgeuse Servicos de TI",
+                "category": "Business",
+                "access_token": BETELGEUSE_PAGE_TOKEN
+            })
+            set_cache("pages", page_list)
+            logger.info("Added Betelgeuse page via fallback token")
         else:
             logger.info(f"Betelgeuse page found in account list")
         return page_list
