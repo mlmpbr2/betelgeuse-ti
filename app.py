@@ -364,7 +364,7 @@ def pages(tok):
     cached = get_cache("pages")
 
     try:
-        r = requests.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=30)
+        r = requests.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=60)
         data = r.json()
         logger.info(f"Pages API response keys: {list(data.keys())}")
         page_list = data.get("data", [])
@@ -403,7 +403,7 @@ def get_posts(page_id, page_token):
 
     try:
         logger.info(f"Fetching posts for page {page_id} with token length {len(page_token) if page_token else 0}")
-        r = requests.get(f"{GRAPH}/{page_id}/posts", params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12}, timeout=30)
+        r = requests.get(f"{GRAPH}/{page_id}/posts", params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12}, timeout=60)
         data = r.json()
         if "error" in data:
             err = data["error"]
@@ -526,7 +526,7 @@ def cb():
         session["err_type"] = "error"
         return redirect("/")
     try:
-        r = requests.get(f"{GRAPH}/oauth/access_token", params={"client_id": APP_ID, "redirect_uri": redirect_uri, "client_secret": APP_SECRET, "code": code}, timeout=30)
+        r = requests.get(f"{GRAPH}/oauth/access_token", params={"client_id": APP_ID, "redirect_uri": redirect_uri, "client_secret": APP_SECRET, "code": code}, timeout=60)
         data = r.json()
         logger.info(f"Token response keys: {list(data.keys())}")
         if "access_token" in data:
