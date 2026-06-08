@@ -18,24 +18,19 @@ GRAPH = "https://graph.facebook.com/v19.0"
 PERMISSIONS = "pages_show_list,pages_read_engagement,pages_read_user_content"
 
 BETELGEUSE_PAGE_ID = "1057812024092361"
-# Page Access Token manual da Betelgeuse (fallback quando nao aparece em /me/accounts)
 BETELGEUSE_PAGE_TOKEN = "EAAMeRanis2QBRjV7d7ttXGnnvUjZBDbOjvdvq6I9LSLyPt4qpyofcyX3nK0ychzgZBuG0ojsMK8iAp7oAAIH6QZBVAOzTkHN2lcmd4mX7fZBi7L33TVlN0efhCZCrZAe8fZBptlNMKhHKjTF6Cp8dHhkyZB2FkRZBirGtWP46rP2vqX6WuIeXJM0hNGVieJGRZBKgf9uRA2yW5EGODEgn9JOdCdHglHirFB4UXuF2Ury0ZBBbX6S4v72ZCZC2IDMZD"
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CACHE EM MEMORIA - TOLERANCIA A FALHAS DO HF
-# ═══════════════════════════════════════════════════════════════════════════
 _cache = {
-    "pages": None,           # Lista de paginas
-    "pages_time": None,      # Timestamp do cache
-    "posts": {},             # {page_id: [posts]}
-    "posts_time": {},        # {page_id: timestamp}
-    "comments": {},          # {post_id: [comments]}
-    "comments_time": {},     # {post_id: timestamp}
+    "pages": None,
+    "pages_time": None,
+    "posts": {},
+    "posts_time": {},
+    "comments": {},
+    "comments_time": {},
 }
-CACHE_TTL = 300  # 5 minutos de validade do cache
+CACHE_TTL = 300
 
 def get_cache(key, subkey=None):
-    """Retorna dados do cache se ainda forem validos"""
     now = datetime.utcnow()
     if subkey:
         data = _cache.get(key, {}).get(subkey)
@@ -52,7 +47,6 @@ def get_cache(key, subkey=None):
     return None
 
 def set_cache(key, value, subkey=None):
-    """Salva dados no cache"""
     now = datetime.utcnow()
     if subkey:
         if key not in _cache:
@@ -66,10 +60,7 @@ def set_cache(key, value, subkey=None):
     logger.info(f"CACHE SET: {key}{'/' + subkey if subkey else ''}")
 
 def is_cache_fresh(key, subkey=None):
-    """Verifica se o cache existe e eh valido"""
     return get_cache(key, subkey) is not None
-
-# ═══════════════════════════════════════════════════════════════════════════
 
 def get_redirect_uri():
     env_uri = os.environ.get("REDIRECT_URI")
@@ -88,11 +79,11 @@ def assets(f):
     return send_from_directory('assets', f)
 
 HTML = """<!doctype html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Betelgeuse TI - Moderador de Comentarios</title>
+<title>Betelgeuse TI - Comment Moderator</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
 <style>
@@ -235,12 +226,12 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
       <div class="header-logo">B</div>
       <div class="header-title">
         <h1>Betelgeuse TI</h1>
-        <span>Moderador de Comentarios</span>
+        <span>Comment Moderator</span>
       </div>
     </div>
     <div style="display:flex;align-items:center;gap:16px">
       <span class="header-badge"><i class="fas fa-shield-alt" style="margin-right:6px"></i>CNPJ 51.770.524/0001-87</span>
-      {% if token %}<div class="header-user"><i class="fas fa-user-circle"></i> Conectado</div>{% endif %}
+      {% if token %}<div class="header-user"><i class="fas fa-user-circle"></i> Connected</div>{% endif %}
     </div>
   </div>
 </div>
@@ -254,77 +245,77 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
 {% endif %}
 {% if not token %}
 <div class="card login-hero fade-in">
-  <h2><i class="fab fa-facebook" style="margin-right:10px;color:var(--primary)"></i>Conecte sua Pagina do Facebook</h2>
-  <p>Faca login com a conta do Facebook que administra a pagina <strong>Betelgeuse Servicos de TI</strong> para monitorar e moderar comentarios em tempo real.</p>
+  <h2><i class="fab fa-facebook" style="margin-right:10px;color:var(--primary)"></i>Connect Your Facebook Page</h2>
+  <p>Log in with the Facebook account that administers the <strong>Betelgeuse IT Services</strong> page to monitor and moderate comments in real time.</p>
   <div class="perm-grid">
-    <div class="perm-item"><div class="perm-icon std"><i class="fas fa-file-alt"></i></div><div><div class="perm-title">pages_show_list - Listar suas Paginas</div><div class="perm-desc">Exibe as Paginas que voce administra para que possa escolher qual monitorar.</div></div></div>
-    <div class="perm-item"><div class="perm-icon adv"><i class="fas fa-chart-bar"></i></div><div><div class="perm-title">pages_read_engagement - Ler posts e metricas</div><div class="perm-desc">Le as publicacoes da Pagina selecionada para voce escolher qual moderar.</div></div></div>
-    <div class="perm-item"><div class="perm-icon sens"><i class="fas fa-comments"></i></div><div><div class="perm-title">pages_read_user_content - Ler comentarios</div><div class="perm-desc">Le nome do autor, mensagem e data dos comentarios para moderacao em tempo real. Nenhum dado e armazenado.</div></div></div>
+    <div class="perm-item"><div class="perm-icon std"><i class="fas fa-file-alt"></i></div><div><div class="perm-title">pages_show_list - List Your Pages</div><div class="perm-desc">Displays the Pages you administer so you can choose which one to monitor.</div></div></div>
+    <div class="perm-item"><div class="perm-icon adv"><i class="fas fa-chart-bar"></i></div><div><div class="perm-title">pages_read_engagement - Read Posts & Metrics</div><div class="perm-desc">Reads the Page's posts so you can choose which one to moderate.</div></div></div>
+    <div class="perm-item"><div class="perm-icon sens"><i class="fas fa-comments"></i></div><div><div class="perm-title">pages_read_user_content - Read Comments</div><div class="perm-desc">Reads author name, message, and date for real-time moderation. No data is stored.</div></div></div>
   </div>
-  <a href="/login" class="btn btn-lg"><i class="fab fa-facebook-f"></i> Entrar com Facebook</a>
+  <a href="/login" class="btn btn-lg"><i class="fab fa-facebook-f"></i> Log in with Facebook</a>
   <div class="card" style="max-width:520px;margin:32px auto 0;text-align:left;padding:20px">
-    <h4 style="margin-bottom:12px;font-size:15px"><i class="fas fa-lock" style="margin-right:8px;color:var(--secondary)"></i>Compromisso de Privacidade</h4>
+    <h4 style="margin-bottom:12px;font-size:15px"><i class="fas fa-lock" style="margin-right:8px;color:var(--secondary)"></i>Privacy Commitment</h4>
     <p class="muted" style="font-size:13px;line-height:1.8">
-      <i class="fas fa-check" style="color:var(--secondary);margin-right:8px"></i>Nenhum dado armazenado - processamento apenas em tempo real<br>
-      <i class="fas fa-check" style="color:var(--secondary);margin-right:8px"></i>Sessao limpa ao sair<br>
-      <i class="fas fa-check" style="color:var(--secondary);margin-right:8px"></i>Revogue o acesso a qualquer momento nas Configuracoes do Facebook<br>
-      <i class="fas fa-check" style="color:var(--secondary);margin-right:8px"></i>Empresa verificada por CNPJ (51.770.524/0001-87)
+      <i class="fas fa-check" style="color:var(--secondary);margin-right:8px"></i>No data stored — real-time processing only<br>
+      <i class="fas fa-check" style="color:var(--secondary);margin-right:8px"></i>Session cleared on logout<br>
+      <i class="fas fa-check" style="color:var(--secondary);margin-right:8px"></i>Revoke access anytime in Facebook Settings<br>
+      <i class="fas fa-check" style="color:var(--secondary);margin-right:8px"></i>Company verified by CNPJ (51.770.524/0001-87)
     </p>
   </div>
 </div>
 {% else %}
 <div class="alert alert-success fade-in">
   <span class="alert-icon"><i class="fas fa-check-circle"></i></span>
-  <div class="alert-content"><strong>Autenticado com sucesso.</strong> Selecione uma Pagina para comecar a moderar. <a href="/logout" style="color:#2e7d32;font-weight:700;margin-left:8px"><i class="fas fa-sign-out-alt"></i> Desconectar</a></div>
+  <div class="alert-content"><strong>Successfully authenticated.</strong> Select a Page to start moderating. <a href="/logout" style="color:#2e7d32;font-weight:700;margin-left:8px"><i class="fas fa-sign-out-alt"></i> Disconnect</a></div>
 </div>
 <div class="card fade-in">
   <div class="steps">
-    <div class="step active"><div class="step-num active">1</div><span class="step-label">Escolher Pagina</span></div>
+    <div class="step active"><div class="step-num active">1</div><span class="step-label">Choose Page</span></div>
     <span class="step-arrow"><i class="fas fa-chevron-right"></i></span>
-    <div class="step {% if post_id %}done{% endif %}"><div class="step-num {% if post_id %}done{% endif %}">2</div><span class="step-label">Escolher Post</span></div>
+    <div class="step {% if post_id %}done{% endif %}"><div class="step-num {% if post_id %}done{% endif %}">2</div><span class="step-label">Choose Post</span></div>
     <span class="step-arrow"><i class="fas fa-chevron-right"></i></span>
-    <div class="step {% if comments is not none %}done{% endif %}"><div class="step-num {% if comments is not none %}done{% endif %}">3</div><span class="step-label">Moderar Comentarios</span></div>
+    <div class="step {% if comments is not none %}done{% endif %}"><div class="step-num {% if comments is not none %}done{% endif %}">3</div><span class="step-label">Moderate Comments</span></div>
   </div>
-  <div class="card-header"><div><div class="card-title"><i class="fas fa-flag"></i> Escolha sua Pagina {% if from_cache_pages %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permissao: <span class="badge badge-std">pages_show_list</span></div></div></div>
-  <form><div class="form-group"><label class="form-label"><i class="fas fa-list" style="margin-right:6px;color:var(--primary)"></i>Pagina do Facebook</label><select name="page" onchange="this.form.submit()"><option value="">- Selecione uma Pagina -</option>{% for p in pages %}<option value="{{p.id}}|{{p.access_token}}" {% if sel and sel.startswith(p.id|string) %}selected{% endif %}>{{p.name}} {% if p.category %}({{p.category}}){% endif %}</option>{% endfor %}</select></div></form>
-  <p class="muted" style="margin-top:12px"><i class="fas fa-info-circle" style="margin-right:6px"></i>{{pages|length}} Pagina(s) encontrada(s)</p>
+  <div class="card-header"><div><div class="card-title"><i class="fas fa-flag"></i> Choose Your Page {% if from_cache_pages %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permission: <span class="badge badge-std">pages_show_list</span></div></div></div>
+  <form><div class="form-group"><label class="form-label"><i class="fas fa-list" style="margin-right:6px;color:var(--primary)"></i>Facebook Page</label><select name="page" onchange="this.form.submit()"><option value="">- Select a Page -</option>{% for p in pages %}<option value="{{p.id}}|{{p.access_token}}" {% if sel and sel.startswith(p.id|string) %}selected{% endif %}>{{p.name}} {% if p.category %}({{p.category}}){% endif %}</option>{% endfor %}</select></div></form>
+  <p class="muted" style="margin-top:12px"><i class="fas fa-info-circle" style="margin-right:6px"></i>{{pages|length}} Page(s) found</p>
   {% if betelgeuse_missing %}
   <div class="alert alert-warning fade-in" style="margin-top:16px">
     <span class="alert-icon"><i class="fas fa-exclamation-circle"></i></span>
-    <div class="alert-content"><strong>Pagina Betelgeuse nao encontrada</strong><br>A pagina <strong>Betelgeuse Servicos de TI</strong> (ID: {{betelgeuse_id}}) nao aparece na lista. Verifique se:<br>- Voce e administrador da pagina<br>- A pagina esta vinculada ao Business Manager<br>- O app tem permissao para acessar a pagina</div>
+    <div class="alert-content"><strong>Betelgeuse Page not found</strong><br>The page <strong>Betelgeuse IT Services</strong> (ID: {{betelgeuse_id}}) does not appear in the list. Please verify:<br>- You are an administrator of the page<br>- The page is linked to Business Manager<br>- The app has permission to access the page</div>
   </div>
   {% endif %}
 </div>
 {% if posts is not none %}
 <div class="card fade-in">
-  <div class="card-header"><div><div class="card-title"><i class="fas fa-newspaper"></i> Escolha uma Publicacao {% if from_cache_posts %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permissao: <span class="badge badge-adv">pages_read_engagement</span></div></div></div>
+  <div class="card-header"><div><div class="card-title"><i class="fas fa-newspaper"></i> Choose a Post {% if from_cache_posts %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permission: <span class="badge badge-adv">pages_read_engagement</span></div></div></div>
   {% if posts %}
   <div class="post-grid">
     {% for po in posts %}
     <div class="post-card {% if post_id == po.id %}selected{% endif %}" onclick="window.location.href='/comments?post_id={{po.id}}&page={{sel|urlencode}}'">
       {% if po.full_picture %}<img src="{{po.full_picture}}" class="post-image" alt="Post image" onerror="this.style.display='none'">{% endif %}
-      <div class="post-text {% if not po.message %}empty{% endif %}">{{po.message[:160] if po.message else '(Publicacao com midia)'}}</div>
-      <div class="post-meta"><span><i class="far fa-calendar-alt"></i> {{po.created_time[:10] if po.created_time else 'Data desconhecida'}}</span><span><i class="far fa-comment"></i> {{po.comments_count or '0'}} comentarios</span></div>
-      {% if post_id == po.id %}<div class="post-badge"><i class="fas fa-check"></i> Selecionado</div>{% endif %}
+      <div class="post-text {% if not po.message %}empty{% endif %}">{{po.message[:160] if po.message else '(Media Post)'}}</div>
+      <div class="post-meta"><span><i class="far fa-calendar-alt"></i> {{po.created_time[:10] if po.created_time else 'Unknown date'}}</span><span><i class="far fa-comment"></i> {{po.comments_count or '0'}} comments</span></div>
+      {% if post_id == po.id %}<div class="post-badge"><i class="fas fa-check"></i> Selected</div>{% endif %}
     </div>
     {% endfor %}
   </div>
   {% else %}
-  <div class="empty-state"><i class="far fa-folder-open"></i><p>Nenhuma publicacao encontrada nesta pagina.</p></div>
+  <div class="empty-state"><i class="far fa-folder-open"></i><p>No posts found on this page.</p></div>
   {% endif %}
 </div>
 {% endif %}
 {% if comments is not none %}
 <div class="card fade-in">
-  <div class="card-header"><div><div class="card-title"><i class="fas fa-comments"></i> Moderar Comentarios {% if from_cache_comments %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permissao: <span class="badge badge-sens">pages_read_user_content</span></div></div></div>
+  <div class="card-header"><div><div class="card-title"><i class="fas fa-comments"></i> Moderate Comments {% if from_cache_comments %}<span class="cache-badge"><i class="fas fa-history"></i> Cache</span>{% endif %}</div><div class="card-subtitle">Permission: <span class="badge badge-sens">pages_read_user_content</span></div></div></div>
   {% if selected_post %}
-  <div class="post-banner"><i class="fas fa-newspaper"></i><div class="post-banner-content"><div class="post-banner-title">{{selected_post.message[:200] if selected_post.message else '(Publicacao com midia)'}}</div><div class="post-banner-meta"><i class="far fa-calendar-alt" style="margin-right:6px"></i>{{selected_post.created_time[:10] if selected_post.created_time else 'Data desconhecida'}}</div></div></div>
+  <div class="post-banner"><i class="fas fa-newspaper"></i><div class="post-banner-content"><div class="post-banner-title">{{selected_post.message[:200] if selected_post.message else '(Media Post)'}}</div><div class="post-banner-meta"><i class="far fa-calendar-alt" style="margin-right:6px"></i>{{selected_post.created_time[:10] if selected_post.created_time else 'Unknown date'}}</div></div></div>
   {% endif %}
   <div class="stats-grid">
-    <div class="stat-card primary"><div class="stat-num primary">{{comments|length}}</div><div class="stat-label">Total de Comentarios</div></div>
-    <div class="stat-card success"><div class="stat-num success">{{total_likes}}</div><div class="stat-label">Total de Curtidas</div></div>
-    <div class="stat-card warning"><div class="stat-num warning">{{negative_count}}</div><div class="stat-label">Sinalizados</div></div>
-    <div class="stat-card danger"><div class="stat-num danger">{{(negative_count / comments|length * 100)|round(1) if comments|length > 0 else 0}}%</div><div class="stat-label">Taxa Negativa</div></div>
+    <div class="stat-card primary"><div class="stat-num primary">{{comments|length}}</div><div class="stat-label">Total Comments</div></div>
+    <div class="stat-card success"><div class="stat-num success">{{total_likes}}</div><div class="stat-label">Total Likes</div></div>
+    <div class="stat-card warning"><div class="stat-num warning">{{negative_count}}</div><div class="stat-label">Flagged</div></div>
+    <div class="stat-card danger"><div class="stat-num danger">{{(negative_count / comments|length * 100)|round(1) if comments|length > 0 else 0}}%</div><div class="stat-label">Negative Rate</div></div>
   </div>
   <div class="divider"></div>
   {% if comments %}
@@ -333,36 +324,34 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
     <div class="comment-card {% if c.is_negative %}negative{% endif %} fade-in">
       <div class="comment-header">
         <div class="comment-author"><div class="comment-avatar">{{c.author_name[0]|upper if c.author_name else '?'}}</div><div><div class="comment-name">{{c.author_name}}</div><span class="comment-id">ID: {{c.author_id}}</span></div></div>
-        {% if c.is_negative %}<span class="badge badge-sens"><i class="fas fa-flag" style="margin-right:4px"></i>SINALIZADO</span>{% endif %}
+        {% if c.is_negative %}<span class="badge badge-sens"><i class="fas fa-flag" style="margin-right:4px"></i>FLAGGED</span>{% endif %}
       </div>
       <div class="comment-text">{{c.message}}</div>
-      <div class="comment-footer"><span><i class="far fa-calendar-alt"></i> {{c.created_time}}</span><span><i class="far fa-heart"></i> {{c.like_count}} curtidas</span><span><i class="far fa-clock"></i> {{c.time_ago}}</span></div>
+      <div class="comment-footer"><span><i class="far fa-calendar-alt"></i> {{c.created_time}}</span><span><i class="far fa-heart"></i> {{c.like_count}} likes</span><span><i class="far fa-clock"></i> {{c.time_ago}}</span></div>
       <div class="comment-actions">
-        <a href="https://facebook.com/{{c.id}}" target="_blank" class="btn btn-ghost"><i class="fas fa-external-link-alt"></i> Ver no Facebook</a>
-        {% if c.is_negative %}<button class="btn btn-danger" onclick="alert('Funcionalidade de resposta em desenvolvimento')" style="font-size:12px"><i class="fas fa-reply"></i> Responder</button>{% endif %}
+        <a href="https://facebook.com/{{c.id}}" target="_blank" class="btn btn-ghost"><i class="fas fa-external-link-alt"></i> View on Facebook</a>
+        {% if c.is_negative %}<button class="btn btn-danger" onclick="alert('Reply feature in development')" style="font-size:12px"><i class="fas fa-reply"></i> Reply</button>{% endif %}
       </div>
     </div>
     {% endfor %}
   </div>
   {% else %}
-  <div class="empty-state"><i class="far fa-comment-dots"></i><p>Nenhum comentario nesta publicacao ainda.</p></div>
+  <div class="empty-state"><i class="far fa-comment-dots"></i><p>No comments on this post yet.</p></div>
   {% endif %}
-  <div class="divider"></div><div style="text-align:center"><a href="/?page={{sel|urlencode}}" class="btn btn-outline" style="font-size:13px"><i class="fas fa-arrow-left"></i> Voltar para Publicacoes</a></div>
+  <div class="divider"></div><div style="text-align:center"><a href="/?page={{sel|urlencode}}" class="btn btn-outline" style="font-size:13px"><i class="fas fa-arrow-left"></i> Back to Posts</a></div>
 </div>
 {% endif %}
 {% endif %}
 <div class="footer">
-  <p>&copy; 2026 <strong>Betelgeuse Servicos de TI</strong> - CNPJ 51.770.524/0001-87</p>
-  <p style="margin-top:8px"><a href="/privacy"><i class="fas fa-shield-alt" style="margin-right:4px"></i>Politica de Privacidade</a><a href="/terms"><i class="fas fa-file-contract" style="margin-right:4px"></i>Termos de Uso</a><a href="/delete"><i class="fas fa-trash-alt" style="margin-right:4px"></i>Exclusao de Dados</a><a href="/data-use"><i class="fas fa-handshake" style="margin-right:4px"></i>Uso de Dados</a></p>
+  <p>&copy; 2026 <strong>Betelgeuse IT Services</strong> - CNPJ 51.770.524/0001-87</p>
+  <p style="margin-top:8px"><a href="/privacy"><i class="fas fa-shield-alt" style="margin-right:4px"></i>Privacy Policy</a><a href="/terms"><i class="fas fa-file-contract" style="margin-right:4px"></i>Terms of Use</a><a href="/delete"><i class="fas fa-trash-alt" style="margin-right:4px"></i>Data Deletion</a><a href="/data-use"><i class="fas fa-handshake" style="margin-right:4px"></i>Data Use</a></p>
 </div>
 </div>
 </body>
 </html>"""
 
 def pages(tok):
-    # Tenta cache primeiro
     cached = get_cache("pages")
-
     try:
         r = requests.get(f"{GRAPH}/me/accounts", params={"access_token": tok, "fields": "name,id,category,access_token,tasks"}, timeout=60)
         data = r.json()
@@ -370,18 +359,14 @@ def pages(tok):
         page_list = data.get("data", [])
         for p in page_list:
             logger.info(f"  -> Page: {p.get('name')} | ID: {p.get('id')} | Category: {p.get('category')} | Has token: {bool(p.get('access_token'))}")
-
-        # Salva no cache
         set_cache("pages", page_list)
-
         betelgeuse_found = any(p.get("id") == BETELGEUSE_PAGE_ID for p in page_list)
         if not betelgeuse_found:
             logger.warning(f"Betelgeuse page (ID: {BETELGEUSE_PAGE_ID}) NOT found in /me/accounts. Pages found: {len(page_list)}")
-            # FALLBACK: usar Page Access Token manual
             logger.info("Using BETELGEUSE_PAGE_TOKEN as fallback")
             page_list.append({
                 "id": BETELGEUSE_PAGE_ID,
-                "name": "Betelgeuse Servicos de TI",
+                "name": "Betelgeuse IT Services",
                 "category": "Business",
                 "access_token": BETELGEUSE_PAGE_TOKEN
             })
@@ -392,7 +377,6 @@ def pages(tok):
         return page_list
     except Exception as e:
         logger.error(f"pages error: {e}")
-        # RETORNA CACHE se existir
         if cached:
             logger.info("Returning cached pages due to error")
             return cached
@@ -400,7 +384,6 @@ def pages(tok):
 
 def get_posts(page_id, page_token):
     cached = get_cache("posts", page_id)
-
     try:
         logger.info(f"Fetching posts for page {page_id} with token length {len(page_token) if page_token else 0}")
         r = requests.get(f"{GRAPH}/{page_id}/posts", params={"access_token": page_token, "fields": "id,message,created_time,full_picture,permalink_url,comments.summary(true)", "limit": 12}, timeout=60)
@@ -413,20 +396,17 @@ def get_posts(page_id, page_token):
         logger.info(f"Found {len(posts)} posts")
         for p in posts:
             p["comments_count"] = p.get("comments", {}).get("summary", {}).get("total_count", "0")
-        # Salva no cache
         set_cache("posts", posts, page_id)
         return posts, None
     except Exception as e:
         logger.error(f"posts error: {e}")
-        # RETORNA CACHE se existir
         if cached:
             logger.info("Returning cached posts due to error")
-            return cached, {"message": "O Hugging Face esta com instabilidade momentanea - Dados em cache podem estar desatualizados", "type": "network_error", "from_cache": True}
-        return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "network_error"}
+            return cached, {"message": "Hugging Face is experiencing temporary instability - Cached data may be outdated", "type": "network_error", "from_cache": True}
+        return [], {"message": "Hugging Face is experiencing temporary instability - Click to retry", "type": "network_error"}
 
 def get_comments(post_id, page_token):
     cached = get_cache("comments", post_id)
-
     try:
         logger.info(f"Fetching comments for post {post_id}")
         r = requests.get(f"{GRAPH}/{post_id}/comments", params={"access_token": page_token, "fields": "id,from{name,id},message,created_time,like_count,attachment", "limit": 50}, timeout=30)
@@ -437,7 +417,7 @@ def get_comments(post_id, page_token):
             return [], err
         raw = data.get("data", [])
         logger.info(f"Found {len(raw)} comments")
-        neg_kw = ["reclamacao","problema","ruim","pessimo","demora","atraso","erro","insatisfeito","complaint","bad","terrible","delay","wrong","issue","problem","slow","error","fail","broken","worst","hate","angry","horrivel","decepcionado","frustrado","nao funciona","bug","crash","lento","caro","roubo","golpe","fraud"]
+        neg_kw = ["complaint","problem","bad","terrible","delay","late","error","unsatisfied","poor","worst","hate","angry","horrible","disappointed","frustrated","does not work","bug","crash","slow","expensive","scam","fraud","broken","fail","issue","wrong","slow","worst","hate","angry","terrible","delay","wrong","issue","problem","slow","error","fail","broken","worst","hate","angry","horrible","disappointed","frustrated","does not work","bug","crash","slow","expensive","scam","fraud"]
         processed = []
         for c in raw:
             msg = c.get("message", "")
@@ -449,24 +429,22 @@ def get_comments(post_id, page_token):
                     dt = datetime.strptime(created[:19], "%Y-%m-%dT%H:%M:%S")
                     delta = datetime.utcnow() - dt
                     if delta.days > 0:
-                        time_ago = f"{delta.days}d atras"
+                        time_ago = f"{delta.days}d ago"
                     elif delta.seconds > 3600:
-                        time_ago = f"{delta.seconds//3600}h atras"
+                        time_ago = f"{delta.seconds//3600}h ago"
                     else:
-                        time_ago = f"{delta.seconds//60}min atras"
+                        time_ago = f"{delta.seconds//60}min ago"
                 except:
                     time_ago = created[:10]
-            processed.append({"id": c.get("id"), "author_name": author.get("name", "Usuario do Facebook"), "author_id": author.get("id", ""), "message": msg or "(sem texto)", "created_time": created[:10] if created else "Data desconhecida", "like_count": c.get("like_count", 0), "is_negative": any(kw in msg.lower() for kw in neg_kw), "time_ago": time_ago})
-        # Salva no cache
+            processed.append({"id": c.get("id"), "author_name": author.get("name", "Facebook User"), "author_id": author.get("id", ""), "message": msg or "(no text)", "created_time": created[:10] if created else "Unknown date", "like_count": c.get("like_count", 0), "is_negative": any(kw in msg.lower() for kw in neg_kw), "time_ago": time_ago})
         set_cache("comments", processed, post_id)
         return processed, None
     except Exception as e:
         logger.error(f"comments error: {e}")
-        # RETORNA CACHE se existir
         if cached:
             logger.info("Returning cached comments due to error")
-            return cached, {"message": "O Hugging Face esta com instabilidade momentanea - Dados em cache podem estar desatualizados", "type": "network_error", "from_cache": True}
-        return [], {"message": "O Hugging Face esta com instabilidade momentanea - Clique para tentar novamente", "type": "network_error"}
+            return cached, {"message": "Hugging Face is experiencing temporary instability - Cached data may be outdated", "type": "network_error", "from_cache": True}
+        return [], {"message": "Hugging Face is experiencing temporary instability - Click to retry", "type": "network_error"}
 
 @app.route("/")
 def home():
@@ -474,9 +452,7 @@ def home():
     sel = request.args.get("page")
     pgs = pages(tok) if tok else []
     betelgeuse_missing = tok and not any(p.get("id") == BETELGEUSE_PAGE_ID for p in pgs)
-
     from_cache_pages = is_cache_fresh("pages") and pgs == get_cache("pages")
-
     pst = None
     from_cache_posts = False
     if sel and "|" in sel:
@@ -489,10 +465,9 @@ def home():
                 session["err"] = err_msg
                 session["err_type"] = "warning"
             else:
-                session["err"] = f"Nao foi possivel carregar as publicacoes: {err_msg}"
+                session["err"] = f"Could not load posts: {err_msg}"
                 session["err_type"] = "error"
                 return redirect("/")
-
     alert = session.pop("err", None)
     alert_type = session.pop("err_type", "error")
     debug = f"Host: {request.headers.get('Host','N/A')}\nX-Forwarded-Host: {request.headers.get('X-Forwarded-Host','N/A')}\nX-Forwarded-Proto: {request.headers.get('X-Forwarded-Proto','N/A')}\nPages found: {len(pgs)}\nBetelgeuse missing: {betelgeuse_missing}"
@@ -517,12 +492,12 @@ def cb():
     logger.info(f"Args: {dict(request.args)}")
     error = request.args.get("error")
     if error:
-        session["err"] = "<strong>Permissao necessaria</strong><br>Voce recusou o acesso. As tres permissoes sao necessarias para moderacao de comentarios. Nenhum dado e armazenado."
+        session["err"] = "<strong>Permission required</strong><br>You declined access. All three permissions are required for comment moderation. No data is stored."
         session["err_type"] = "error"
         return redirect("/")
     code = request.args.get("code")
     if not code:
-        session["err"] = "Codigo de autorizacao nao recebido."
+        session["err"] = "Authorization code not received."
         session["err_type"] = "error"
         return redirect("/")
     try:
@@ -531,15 +506,15 @@ def cb():
         logger.info(f"Token response keys: {list(data.keys())}")
         if "access_token" in data:
             session["tok"] = data["access_token"]
-            session["err"] = "Conectado com sucesso! Selecione a pagina Betelgeuse para comecar."
+            session["err"] = "Connected successfully! Select the Betelgeuse page to start."
             session["err_type"] = "success"
         else:
-            err_msg = data.get("error", {}).get("message", "Erro desconhecido")
-            session["err"] = f"Falha na autenticacao: {err_msg}"
+            err_msg = data.get("error", {}).get("message", "Unknown error")
+            session["err"] = f"Authentication failed: {err_msg}"
             session["err_type"] = "error"
             logger.error(f"Token FAILED: {err_msg}")
     except Exception as e:
-        session["err"] = f"Erro: {str(e)}"
+        session["err"] = f"Error: {str(e)}"
         session["err_type"] = "error"
         logger.error(f"Token EXCEPTION: {e}")
     return redirect("/")
@@ -549,12 +524,11 @@ def cm():
     pg = request.args.get("page")
     post_id = request.args.get("post_id")
     if not pg or "|" not in pg or not post_id:
-        session["err"] = "Requisicao invalida."
+        session["err"] = "Invalid request."
         return redirect("/")
     pid, pt = pg.split("|", 1)
     pst, _ = get_posts(pid, pt)
     comments, err = get_comments(post_id, pt)
-
     from_cache_comments = False
     if err:
         err_msg = err.get("message", str(err)) if isinstance(err, dict) else str(err)
@@ -563,9 +537,8 @@ def cm():
             session["err"] = err_msg
             session["err_type"] = "warning"
         else:
-            session["err"] = f"Nao foi possivel carregar os comentarios: {err_msg}"
+            session["err"] = f"Could not load comments: {err_msg}"
             return redirect(f"/?page={pg}")
-
     selected_post = next((p for p in pst if p["id"] == post_id), None)
     total_likes = sum(c["like_count"] for c in comments)
     negative_count = sum(1 for c in comments if c["is_negative"])
@@ -575,7 +548,6 @@ def cm():
 def out():
     tok = session.pop("tok", None)
     session.clear()
-    # Limpa cache ao fazer logout
     _cache["pages"] = None
     _cache["pages_time"] = None
     _cache["posts"] = {}
@@ -584,13 +556,13 @@ def out():
     _cache["comments_time"] = {}
     return redirect(f"https://www.facebook.com/logout.php?next=https://mlmpbr-betelgeuse-api.hf.space/&access_token={tok or ''}")
 
-PRIVACY_HTML = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Politica de Privacidade - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#e7f3ff;color:#1877f2;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}</style></head><body><h1>Politica de Privacidade</h1><p><span class="badge">Atualizado: 30 de maio de 2026</span></p><p><strong>Betelgeuse Servicos de TI</strong> - CNPJ 51.770.524/0001-87</p><h2>1. Informacoes que Processamos</h2><p>Nosso aplicativo processa os seguintes dados <strong>apenas em tempo real</strong>:</p><ul><li>Nomes e IDs de Paginas do Facebook que voce administra (via <code>pages_show_list</code>)</li><li>Conteudo de publicacoes, IDs e datas de criacao (via <code>pages_read_engagement</code>)</li><li>Nomes de autores, IDs de autores, texto de comentarios, datas de criacao e contagem de curtidas (via <code>pages_read_user_content</code>)</li></ul><h2>2. Nenhum Armazenamento de Dados</h2><p><strong>Nao armazenamos, persistimos ou retemos nenhum dado do usuario em nossos servidores.</strong> Todos os dados sao obtidos diretamente da API Graph do Facebook e exibidos na sua sessao do navegador.</p><h2>3. Retencao de Dados</h2><p>Os dados sao retidos apenas durante a duracao da sua sessao ativa (tipicamente menos de 30 minutos).</p><h2>4. Compartilhamento de Dados</h2><p>Nao compartilhamos, vendemos, alugamos ou transferimos dados do usuario para terceiros. Nao usamos dados de comentarios para treinar modelos de IA.</p><h2>5. Seus Direitos</h2><p>Voce tem o direito de:</p><ul><li>Revogar permissoes do aplicativo a qualquer momento via <a href="https://www.facebook.com/settings?tab=applications" target="_blank">Configuracoes do Facebook -> Aplicativos</a></li><li>Solicitar exclusao de qualquer dado de sessao em cache via nossa pagina de <a href="/delete">Exclusao de Dados</a></li><li>Entrar em contato pelo e-mail <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></li></ul><h2>6. Contato</h2><p>Betelgeuse Servicos de TI<br>CNPJ: 51.770.524/0001-87<br>E-mail: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a><br>Endereco: Navegantes, SC, Brasil</p><div class="footer">&copy; 2026 Betelgeuse Servicos de TI - <a href="/">Voltar ao App</a> - <a href="/terms">Termos</a> - <a href="/delete">Exclusao de Dados</a></div></body></html>"""
+PRIVACY_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Privacy Policy - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#e7f3ff;color:#1877f2;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}</style></head><body><h1>Privacy Policy</h1><p><span class="badge">Updated: May 30, 2026</span></p><p><strong>Betelgeuse IT Services</strong> - CNPJ 51.770.524/0001-87</p><h2>1. Information We Process</h2><p>Our application processes the following data <strong>only in real time</strong>:</p><ul><li>Names and IDs of Facebook Pages you administer (via <code>pages_show_list</code>)</li><li>Post content, IDs, and creation dates (via <code>pages_read_engagement</code>)</li><li>Author names, author IDs, comment text, creation dates, and like counts (via <code>pages_read_user_content</code>)</li></ul><h2>2. No Data Storage</h2><p><strong>We do not store, persist, or retain any user data on our servers.</strong> All data is obtained directly from the Facebook Graph API and displayed in your browser session.</p><h2>3. Data Retention</h2><p>Data is retained only for the duration of your active session (typically less than 30 minutes).</p><h2>4. Data Sharing</h2><p>We do not share, sell, rent, or transfer user data to third parties. We do not use comment data to train AI models.</p><h2>5. Your Rights</h2><p>You have the right to:</p><ul><li>Revoke app permissions anytime via <a href="https://www.facebook.com/settings?tab=applications" target="_blank">Facebook Settings -> Apps</a></li><li>Request deletion of any cached session data via our <a href="/delete">Data Deletion</a> page</li><li>Contact us at <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></li></ul><h2>6. Contact</h2><p>Betelgeuse IT Services<br>CNPJ: 51.770.524/0001-87<br>Email: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a><br>Address: Navegantes, SC, Brazil</p><div class="footer">&copy; 2026 Betelgeuse IT Services - <a href="/">Back to App</a> - <a href="/terms">Terms</a> - <a href="/delete">Data Deletion</a></div></body></html>"""
 
-TERMS_HTML = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Termos de Uso - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#fff3e0;color:#e65100;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}</style></head><body><h1>Termos de Uso</h1><p><span class="badge">Efetivo: 30 de maio de 2026</span></p><p><strong>Betelgeuse Servicos de TI</strong> - CNPJ 51.770.524/0001-87</p><h2>1. Descricao do Servico</h2><p>O Moderador de Comentarios Betelgeuse TI e uma ferramenta em tempo real que permite aos administradores de Paginas do Facebook visualizar e monitorar comentarios publicos em publicacoes que gerenciam.</p><h2>2. Elegibilidade</h2><p>Voce deve ter pelo menos 18 anos de idade e ser administrador da Pagina do Facebook que deseja monitorar.</p><h2>3. Uso Permitido</h2><p>Voce concorda em usar este servico exclusivamente para:</p><ul><li>Monitorar e moderar comentarios em Paginas do Facebook que voce administra</li><li>Melhorar os tempos de resposta ao atendimento ao cliente</li></ul><p>Voce NAO pode usar este servico para:</p><ul><li>Acessar Paginas que voce nao administra</li><li>Fazer scraping ou download em massa de dados de usuarios</li><li>Usar dados de comentarios para treinar modelos de IA/ML</li><li>Compartilhar conteudo de usuarios com terceiros nao autorizados</li></ul><h2>4. Processamento de Dados</h2><p>Todo o processamento de dados ocorre em tempo real. Nao armazenamos dados de usuarios do Facebook em nossos servidores.</p><h2>5. Rescisao</h2><p>Podemos suspender o acesso por violacoes destes termos ou das Politicas da Plataforma do Facebook. Voce pode encerrar o uso a qualquer momento desconectando o aplicativo nas Configuracoes do Facebook.</p><h2>6. Legislacao Aplicavel</h2><p>Estes termos sao regidos pelas leis do Brasil. As disputas serao resolvidas nos tribunais de Navegantes, SC.</p><h2>7. Contato</h2><p>E-mail: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></p><div class="footer">&copy; 2026 Betelgeuse Servicos de TI - <a href="/">Voltar ao App</a> - <a href="/privacy">Privacidade</a> - <a href="/delete">Exclusao de Dados</a></div></body></html>"""
+TERMS_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Terms of Use - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#fff3e0;color:#e65100;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}</style></head><body><h1>Terms of Use</h1><p><span class="badge">Effective: May 30, 2026</span></p><p><strong>Betelgeuse IT Services</strong> - CNPJ 51.770.524/0001-87</p><h2>1. Service Description</h2><p>The Betelgeuse TI Comment Moderator is a real-time tool that allows Facebook Page administrators to view and monitor public comments on posts they manage.</p><h2>2. Eligibility</h2><p>You must be at least 18 years old and an administrator of the Facebook Page you wish to monitor.</p><h2>3. Permitted Use</h2><p>You agree to use this service exclusively for:</p><ul><li>Monitoring and moderating comments on Facebook Pages you administer</li><li>Improving customer service response times</li></ul><p>You may NOT use this service for:</p><ul><li>Accessing Pages you do not administer</li><li>Scraping or bulk downloading user data</li><li>Using comment data to train AI/ML models</li><li>Sharing user content with unauthorized third parties</li></ul><h2>4. Data Processing</h2><p>All data processing occurs in real time. We do not store Facebook user data on our servers.</p><h2>5. Termination</h2><p>We may suspend access for violations of these terms or Facebook Platform Policies. You may terminate use anytime by disconnecting the app in Facebook Settings.</p><h2>6. Applicable Law</h2><p>These terms are governed by the laws of Brazil. Disputes will be resolved in the courts of Navegantes, SC.</p><h2>7. Contact</h2><p>Email: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></p><div class="footer">&copy; 2026 Betelgeuse IT Services - <a href="/">Back to App</a> - <a href="/privacy">Privacy</a> - <a href="/delete">Data Deletion</a></div></body></html>"""
 
-DELETE_HTML = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Exclusao de Dados - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#ffebee;color:#c62828;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.success{background:#e8f5e9;border:1px solid #a5d6a7;color:#2e7d32;padding:16px;border-radius:12px;margin:16px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}.btn{background:#1877f2;color:#fff;border:0;padding:12px 24px;border-radius:10px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}</style></head><body><h1>Solicitacao de Exclusao de Dados</h1><p><span class="badge">Conforme LGPD / GDPR</span></p><p><strong>Betelgeuse Servicos de TI</strong> - CNPJ 51.770.524/0001-87</p><h2>Como Excluir Seus Dados</h2><div class="success"><strong>Boa noticia:</strong> Nosso aplicativo nao armazena nenhum dado pessoal em nossos servidores. Todos os dados do Facebook sao processados em tempo real e existem apenas durante sua sessao ativa do navegador.</div><h2>Passos Imediatos (Instantaneo)</h2><ol><li><strong>Revogar Acesso do App:</strong> Acesse <a href="https://www.facebook.com/settings?tab=applications" target="_blank">Configuracoes do Facebook -> Aplicativos e Sites</a>, encontre "Betelgeuse TI Moderador de Comentarios" e clique em "Remover".</li><li><strong>Limpar Sessao:</strong> Clique em <a href="/logout" class="btn" style="margin-left:8px">Sair do App</a> para limpar sua sessao atual.</li></ol><h2>Contato para Confirmacao</h2><p>Se desejar confirmacao por escrito de que nenhum dado e retido, entre em contato:</p><ul><li>E-mail: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></li><li>Assunto: <code>Solicitacao de Exclusao de Dados - [Seu ID ou E-mail do Facebook]</code></li><li>Prazo de resposta: Ate 48 horas (dias uteis)</li></ul><h2>Direitos Legais</h2><p>De acordo com a LGPD brasileira e o GDPR europeu, voce tem o direito ao esquecimento. Como nao armazenamos dados pessoais, o cumprimento e imediato apos a remocao do aplicativo.</p><div class="footer">&copy; 2026 Betelgeuse Servicos de TI - <a href="/">Voltar ao App</a> - <a href="/privacy">Privacidade</a> - <a href="/terms">Termos</a></div></body></html>"""
+DELETE_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Data Deletion - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#ffebee;color:#c62828;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.success{background:#e8f5e9;border:1px solid #a5d6a7;color:#2e7d32;padding:16px;border-radius:12px;margin:16px 0}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}.btn{background:#1877f2;color:#fff;border:0;padding:12px 24px;border-radius:10px;font-weight:600;cursor:pointer;text-decoration:none;display:inline-block}</style></head><body><h1>Data Deletion Request</h1><p><span class="badge">LGPD / GDPR Compliant</span></p><p><strong>Betelgeuse IT Services</strong> - CNPJ 51.770.524/0001-87</p><h2>How to Delete Your Data</h2><div class="success"><strong>Good news:</strong> Our application does not store any personal data on our servers. All Facebook data is processed in real time and exists only during your active browser session.</div><h2>Immediate Steps (Instant)</h2><ol><li><strong>Revoke App Access:</strong> Go to <a href="https://www.facebook.com/settings?tab=applications" target="_blank">Facebook Settings -> Apps and Websites</a>, find "Betelgeuse TI Comment Moderator" and click "Remove".</li><li><strong>Clear Session:</strong> Click <a href="/logout" class="btn" style="margin-left:8px">Log Out</a> to clear your current session.</li></ol><h2>Contact for Confirmation</h2><p>If you would like written confirmation that no data is retained, please contact us:</p><ul><li>Email: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></li><li>Subject: <code>Data Deletion Request - [Your Facebook ID or Email]</code></li><li>Response time: Up to 48 hours (business days)</li></ul><h2>Legal Rights</h2><p>Under Brazilian LGPD and European GDPR, you have the right to be forgotten. As we do not store personal data, compliance is immediate upon app removal.</p><div class="footer">&copy; 2026 Betelgeuse IT Services - <a href="/">Back to App</a> - <a href="/privacy">Privacy</a> - <a href="/terms">Terms</a></div></body></html>"""
 
-DATAUSE_HTML = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Acordo de Uso de Dados - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#e8f5e9;color:#2e7d32;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}</style></head><body><h1>Acordo de Uso de Dados</h1><p><span class="badge">Termos Suplementares da Plataforma Meta</span></p><p><strong>Betelgeuse Servicos de TI</strong> - CNPJ 51.770.524/0001-87</p><h2>1. Finalidade do Uso de Dados</h2><p>Usamos dados da Plataforma Facebook exclusivamente para <strong>moderacao de comentarios em tempo real em Paginas do Facebook administradas pelo usuario autenticado</strong>.</p><h2>2. Dados que Acessamos</h2><table style="width:100%;border-collapse:collapse;margin:16px 0"><tr style="background:#f5f6f7"><th style="text-align:left;padding:12px;border:1px solid #ddd">Permissao</th><th style="text-align:left;padding:12px;border:1px solid #ddd">Dados Acessados</th><th style="text-align:left;padding:12px;border:1px solid #ddd">Uso</th></tr><tr><td style="padding:12px;border:1px solid #ddd"><code>pages_show_list</code></td><td style="padding:12px;border:1px solid #ddd">Nome, ID e categoria da Pagina</td><td style="padding:12px;border:1px solid #ddd">Exibir lista de Paginas que o usuario gerencia</td></tr><tr><td style="padding:12px;border:1px solid #ddd"><code>pages_read_engagement</code></td><td style="padding:12px;border:1px solid #ddd">ID, mensagem, created_time, permalink da publicacao</td><td style="padding:12px;border:1px solid #ddd">Listar publicacoes para o usuario selecionar</td></tr><tr><td style="padding:12px;border:1px solid #ddd"><code>pages_read_user_content</code></td><td style="padding:12px;border:1px solid #ddd">Nome do autor, ID do autor, mensagem, created_time, like_count do comentario</td><td style="padding:12px;border:1px solid #ddd">Exibir comentarios para moderacao</td></tr></table><h2>3. Usos Proibidos</h2><p>Nos comprometemos expressamente a NAO:</p><ul><li>Armazenar dados de usuarios do Facebook alem da sessao ativa</li><li>Usar dados para fins publicitarios ou de marketing</li><li>Vender, alugar ou transferir dados para terceiros</li><li>Usar conteudo de comentarios para treinar IA ou ML</li><li>Acessar Paginas nao administradas pelo usuario autenticado</li></ul><h2>4. Conformidade</h2><p>Cumprimos os Termos da Plataforma Meta, os Termos de Processamento de Dados Meta, a LGPD brasileira e o GDPR europeu.</p><h2>5. Contato</h2><p>E-mail: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></p><div class="footer">&copy; 2026 Betelgeuse Servicos de TI - <a href="/">Voltar ao App</a> - <a href="/privacy">Privacidade</a> - <a href="/terms">Termos</a> - <a href="/delete">Exclusao de Dados</a></div></body></html>"""
+DATAUSE_HTML = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Data Use Agreement - Betelgeuse TI</title><style>body{font-family:Inter,system-ui;max-width:800px;margin:40px auto;padding:0 24px;line-height:1.7;color:#1c1e21}h1{color:#1877f2}h2{color:#333;margin-top:32px;font-size:18px}.badge{background:#e8f5e9;color:#2e7d32;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:600}.footer{margin-top:40px;padding-top:20px;border-top:1px solid #ddd;color:#65676b;font-size:13px}a{color:#1877f2}</style></head><body><h1>Data Use Agreement</h1><p><span class="badge">Meta Platform Supplemental Terms</span></p><p><strong>Betelgeuse IT Services</strong> - CNPJ 51.770.524/0001-87</p><h2>1. Purpose of Data Use</h2><p>We use Facebook Platform data exclusively for <strong>real-time comment moderation on Facebook Pages administered by the authenticated user</strong>.</p><h2>2. Data We Access</h2><table style="width:100%;border-collapse:collapse;margin:16px 0"><tr style="background:#f5f6f7"><th style="text-align:left;padding:12px;border:1px solid #ddd">Permission</th><th style="text-align:left;padding:12px;border:1px solid #ddd">Data Accessed</th><th style="text-align:left;padding:12px;border:1px solid #ddd">Use</th></tr><tr><td style="padding:12px;border:1px solid #ddd"><code>pages_show_list</code></td><td style="padding:12px;border:1px solid #ddd">Page name, ID, and category</td><td style="padding:12px;border:1px solid #ddd">Display list of Pages the user manages</td></tr><tr><td style="padding:12px;border:1px solid #ddd"><code>pages_read_engagement</code></td><td style="padding:12px;border:1px solid #ddd">Post ID, message, created_time, permalink</td><td style="padding:12px;border:1px solid #ddd">List posts for the user to select</td></tr><tr><td style="padding:12px;border:1px solid #ddd"><code>pages_read_user_content</code></td><td style="padding:12px;border:1px solid #ddd">Author name, author ID, message, created_time, like_count</td><td style="padding:12px;border:1px solid #ddd">Display comments for moderation</td></tr></table><h2>3. Prohibited Uses</h2><p>We expressly commit to NOT:</p><ul><li>Store Facebook user data beyond the active session</li><li>Use data for advertising or marketing purposes</li><li>Sell, rent, or transfer data to third parties</li><li>Use comment content to train AI or ML models</li><li>Access Pages not administered by the authenticated user</li></ul><h2>4. Compliance</h2><p>We comply with Meta Platform Terms, Meta Data Processing Terms, Brazilian LGPD, and European GDPR.</p><h2>5. Contact</h2><p>Email: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a></p><div class="footer">&copy; 2026 Betelgeuse IT Services - <a href="/">Back to App</a> - <a href="/privacy">Privacy</a> - <a href="/terms">Terms</a> - <a href="/delete">Data Deletion</a></div></body></html>"""
 
 @app.route("/privacy")
 def privacy():
@@ -607,6 +579,7 @@ def delete_data():
 @app.route("/data-use")
 def data_use():
     return DATAUSE_HTML
+
 @app.route('/debug-ssl')
 def debug_ssl():
     import subprocess, ssl, socket
