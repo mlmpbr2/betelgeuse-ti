@@ -607,6 +607,45 @@ def delete_data():
 @app.route("/data-use")
 def data_use():
     return DATAUSE_HTML
+@app.route('/debug-ssl')
+def debug_ssl():
+    import subprocess, ssl, socket
+    results = {}
+    try:
+        result = subprocess.run(['openssl', 'version'], capture_output=True, text=True, timeout=5)
+        results['openssl_version'] = result.stdout.strip()
+    except Exception as e:
+        results['openssl_version'] = f"ERROR: {str(e)}"
+    results['python_ssl_version'] = ssl.OPENSSL_VERSION
+    try:
+        sock = socket.create_connection(("graph.facebook.com", 443), timeout=10)
+        results['tcp_connect_443'] = "OK"
+        sock.close()
+    except Exception as e:
+        results['tcp_connect_443'] = f"FAILED: {str(e)}"
+    try:
+        import requests
+        resp = requests.get("https://graph.facebook.com/v19.0/me?access_token=TESTE", verify=False, timeout=15)
+        results['requests_verify_false'] = f"Status: {resp.status_code} | Body: {resp.text[:100]}"
+    except Exception as e:
+        results['requests_verify_false'] = f"FAILED: {type(e).__name__}: {str(e)}"
+    try:
+        import requests
+        resp = requests.get("https://graph.facebook.com/v19.0/me?access_token=TESTE", timeout=15)
+        results['requests_verify_true'] = f"Status: {resp.status_code}"
+    except Exception as e:
+        results['requests_verify_true'] = f"FAILED: {type(e).__name__}: {str(e)}"
+    token = session.get('tok', 'NO_TOKEN')
+    try:
+        import requests
+        resp = requests.get("https://graph.facebook.com/v19.0/me/accounts", params={"access_token": token, "fields": "name,id"}, timeout=15)
+        results['me_accounts_real'] = f"Status: {resp.status_code} | Body: {resp.text[:200]}"
+    except Exception as e:
+        results['me_accounts_real'] = f"FAILED: {type(e).__name__}: {str(e)}"
+    output = "=== DEBUG SSL - Betelgeuse API ===\n\n"
+    for key, value in results.items():
+        output += f"[{key}]\n{value}\n\n"
+    return f"<pre>{output}</pre>", 200, {'Content-Type': 'text/html; charset=utf-8'}
 
 @app.route("/health")
 def health():
