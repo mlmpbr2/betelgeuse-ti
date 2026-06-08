@@ -19,7 +19,7 @@ PERMISSIONS = "pages_show_list,pages_read_engagement,pages_read_user_content"
 
 BETELGEUSE_PAGE_ID = "1057812024092361"
 # Page Access Token manual da Betelgeuse (fallback quando nao aparece em /me/accounts)
-BETELGEUSE_PAGE_TOKEN = "EAAMeRanis2QBRsSkZARCZBhKeFZBafkZANN0VuuwBkxp1KUjR2FsbTcgKR2GmuvSIs9ghuV7NHVvmOud2PFL6OqHqS9XF55PynvEH2tuyKDHZApXw6GYQa0zYmamcK7jLFDzOSklf4PZA4L1pVQdbYlpN6ReRWEhgIPfymDo9mOapxpw8BLIdY5EwnkjbVbk4a102IspR6TESvSmiuy0i0vpMti1ZAlwkmSggHxOzuzBxNElpdNy0QZBDervldQZD"
+BETELGEUSE_PAGE_TOKEN = "EAAMeRanis2QBRjV7d7ttXGnnvUjZBDbOjvdvq6I9LSLyPt4qpyofcyX3nK0ychzgZBuG0ojsMK8iAp7oAAIH6QZBVAOzTkHN2lcmd4mX7fZBi7L33TVlN0efhCZCrZAe8fZBptlNMKhHKjTF6Cp8dHhkyZB2FkRZBirGtWP46rP2vqX6WuIeXJM0hNGVieJGRZBKgf9uRA2yW5EGODEgn9JOdCdHglHirFB4UXuF2Ury0ZBBbX6S4v72ZCZC2IDMZD"
 
 # ═══════════════════════════════════════════════════════════════════════════
 # CACHE EM MEMORIA - TOLERANCIA A FALHAS DO HF
