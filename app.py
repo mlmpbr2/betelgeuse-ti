@@ -236,7 +236,7 @@ select:focus,input:focus{outline:none;border-color:var(--primary);box-shadow:0 0
   </div>
 </div>
 <div class="container">
-{% if debug_info %}<div class="debug-box fade-in"><strong>DEBUG INFO</strong><pre>{{debug_info}}</pre></div>{% endif %}
+
 {% if alert %}
 <div class="alert alert-{{alert_type}} fade-in">
   <span class="alert-icon">{% if alert_type=='error' %}<i class="fas fa-exclamation-triangle"></i>{% elif alert_type=='success' %}<i class="fas fa-check-circle"></i>{% elif alert_type=='warning' %}<i class="fas fa-info-circle"></i>{% else %}<i class="fas fa-info-circle"></i>{% endif %}</span>
