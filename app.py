@@ -13,7 +13,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.secret_key = os.environ.get("SECRET_KEY", "Betelgeuse-2026-Secure")
 
 APP_ID = os.environ.get("META_APP_ID", "877709481915236")
-APP_SECRET = os.environ.get("META_APP_SECRET", "3bf01b88362dac1be1bb62999af4a5e2")
+APP_SECRET = os.environ.get("META_APP_SECRET", "35fa8a5ef198da7177f7f2672216beff")
 GRAPH = "https://graph.facebook.com/v19.0"
 PERMISSIONS = "pages_show_list,pages_read_engagement,pages_read_user_content"
 
