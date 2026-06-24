@@ -13,7 +13,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.secret_key = os.environ.get("SECRET_KEY", "Betelgeuse-2026-Secure")
 
 APP_ID = os.environ.get("META_APP_ID", "877709481915236")
-APP_SECRET = os.environ.get("META_APP_SECRET", "35fa8a5ef198da7177f7f2672216beff")
+APP_SECRET = os.environ.get("META_APP_SECRET")
 GRAPH = "https://graph.facebook.com/v19.0"
 PERMISSIONS = "pages_show_list,pages_read_engagement,pages_read_user_content"
 
@@ -471,7 +471,7 @@ def home():
     alert = session.pop("err", None)
     alert_type = session.pop("err_type", "error")
     debug = f"Host: {request.headers.get('Host','N/A')}\nX-Forwarded-Host: {request.headers.get('X-Forwarded-Host','N/A')}\nX-Forwarded-Proto: {request.headers.get('X-Forwarded-Proto','N/A')}\nPages found: {len(pgs)}\nBetelgeuse missing: {betelgeuse_missing}"
-    return render_template_string(HTML, token=tok, pages=pgs, posts=pst, sel=sel, post_id=None, comments=None, selected_post=None, alert=alert, alert_type=alert_type, total_likes=0, negative_count=0, debug_info=debug, betelgeuse_missing=betelgeuse_missing, betelgeuse_id=BETELGEUSE_PAGE_ID, from_cache_pages=from_cache_pages, from_cache_posts=from_cache_posts, from_cache_comments=False)
+    return render_template_string(HTML, token=tok, pages=pgs, posts=pst, sel=sel, post_id=None, comments=None, selected_post=None, alert=alert, alert_type=alert_type, total_likes=0, negative_count=0, debug_info=None, betelgeuse_missing=betelgeuse_missing, betelgeuse_id=BETELGEUSE_PAGE_ID, from_cache_pages=from_cache_pages, from_cache_posts=from_cache_posts, from_cache_comments=False)
 
 @app.route("/login")
 def login():
