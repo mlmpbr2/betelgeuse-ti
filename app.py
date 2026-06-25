@@ -921,14 +921,17 @@ def comments():
         total_likes = 0
         for c in comments_data:
             from_data = c.get("from", {})
-        # Build Facebook comment URL from comment ID
-        # Format: {post_id}_{comment_id}
-        comment_full_id = c["id"]
-        parts = comment_full_id.split("_")
-        if len(parts) >= 2:
-            fb_url = f"https://www.facebook.com/{parts[0]}?comment_id={parts[1]}"
-        else:
-            fb_url = f"https://www.facebook.com/{comment_full_id}"
+        # Build Facebook comment URL utilizing the requested API permalink
+        fb_url = c.get("permalink_url")
+        
+        # Fallback de segurança mantendo a sua lógica original
+        if not fb_url:
+            comment_full_id = c["id"]
+            parts = comment_full_id.split("_")
+            if len(parts) >= 2:
+                fb_url = f"https://www.facebook.com/{parts[0]}?comment_id={parts[1]}"
+            else:
+                fb_url = f"https://www.facebook.com/{comment_full_id}"
 
         comments.append({
             "id": c["id"],
