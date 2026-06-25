@@ -932,6 +932,9 @@ def comments():
                 fb_url = f"https://www.facebook.com/{parts[0]}?comment_id={parts[1]}"
             else:
                 fb_url = f"https://www.facebook.com/{comment_full_id}"
+        # SANITIZAÇÃO BRUTA: Remove qualquer duplicação de domínio forçando a limpeza da string
+        if isinstance(fb_url, str):
+            fb_url = fb_url.replace("https://www.facebook.com/https://www.facebook.com/", "https://www.facebook.com/")
 
         comments.append({
             "id": c["id"],
