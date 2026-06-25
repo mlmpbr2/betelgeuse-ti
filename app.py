@@ -911,6 +911,7 @@ def comments():
             params={
                 "access_token": page_token,
                 "fields": "id,from,message,created_time,like_count,permalink_url"
+                "filter": "stream"
             },
             timeout=30
         )
