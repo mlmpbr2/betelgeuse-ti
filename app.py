@@ -557,7 +557,7 @@ COMMENTS_TEMPLATE = """
             <button class="btn btn-danger" onclick="hideComment('{{ comment.id }}')">
                 🚫 Hide Comment
             </button>
-            <a href="https://facebook.com/{{ comment.permalink_url }}" 
+            <a href="{{ comment.fb_url }}" 
                target="_blank" 
                class="btn btn-outline">
                 🔗 View on Facebook
@@ -921,15 +921,24 @@ def comments():
         total_likes = 0
         for c in comments_data:
             from_data = c.get("from", {})
-            comments.append({
-                "id": c["id"],
-                "from_name": from_data.get("name", "Facebook User"),
-                "message": c.get("message", ""),
-                "created_time": c.get("created_time", ""),
-                "like_count": c.get("like_count", 0),
-                "permalink_url": c.get("permalink_url", "")
-            })
-            total_likes += c.get("like_count", 0)
+        # Build Facebook comment URL from comment ID
+        # Format: {post_id}_{comment_id}
+        comment_full_id = c["id"]
+        parts = comment_full_id.split("_")
+        if len(parts) >= 2:
+            fb_url = f"https://www.facebook.com/{parts[0]}?comment_id={parts[1]}"
+        else:
+            fb_url = f"https://www.facebook.com/{comment_full_id}"
+
+        comments.append({
+            "id": c["id"],
+            "from_name": from_data.get("name", "Facebook User"),
+            "message": c.get("message", ""),
+            "created_time": c.get("created_time", ""),
+            "like_count": c.get("like_count", 0),
+            "fb_url": fb_url
+        })    
+        total_likes += c.get("like_count", 0)
 
         return render_template_string(
             BASE_TEMPLATE,
