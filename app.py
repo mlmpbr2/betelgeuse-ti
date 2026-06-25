@@ -910,7 +910,7 @@ def comments():
             f"{FB_BASE_URL}/{post_id}/comments",
             params={
                 "access_token": page_token,
-                "fields": "id,from,message,created_time,like_count,permalink_url"
+                "fields": "id,from,message,created_time,like_count,permalink_url",
                 "filter": "stream"
             },
             timeout=30
@@ -920,32 +920,35 @@ def comments():
         # Format comments
         comments = []
         total_likes = 0
+        
         for c in comments_data:
             from_data = c.get("from", {})
-        # Build Facebook comment URL utilizing the requested API permalink
-        fb_url = c.get("permalink_url")
-        
-        # Fallback de segurança mantendo a sua lógica original
-        if not fb_url:
-            comment_full_id = c["id"]
-            parts = comment_full_id.split("_")
-            if len(parts) >= 2:
-                fb_url = f"https://www.facebook.com/{parts[0]}?comment_id={parts[1]}"
-            else:
-                fb_url = f"https://www.facebook.com/{comment_full_id}"
-        # SANITIZAÇÃO BRUTA: Remove qualquer duplicação de domínio forçando a limpeza da string
-        if isinstance(fb_url, str):
-            fb_url = fb_url.replace("https://www.facebook.com/https://www.facebook.com/", "https://www.facebook.com/")
+            
+            # Build Facebook comment URL utilizing the requested API permalink
+            fb_url = c.get("permalink_url")
+            
+            # Fallback de segurança mantendo a sua lógica original
+            if not fb_url:
+                comment_full_id = c["id"]
+                parts = comment_full_id.split("_")
+                if len(parts) >= 2:
+                    fb_url = f"https://www.facebook.com/{parts[0]}?comment_id={parts[1]}"
+                else:
+                    fb_url = f"https://www.facebook.com/{comment_full_id}"
+            
+            # SANITIZAÇÃO BRUTA: Remove qualquer duplicação de domínio forçando a limpeza da string
+            if isinstance(fb_url, str):
+                fb_url = fb_url.replace("https://www.facebook.com/https://www.facebook.com/", "https://www.facebook.com/")
 
-        comments.append({
-            "id": c["id"],
-            "from_name": from_data.get("name", "Facebook User"),
-            "message": c.get("message", ""),
-            "created_time": c.get("created_time", ""),
-            "like_count": c.get("like_count", 0),
-            "fb_url": fb_url
-        })    
-        total_likes += c.get("like_count", 0)
+            comments.append({
+                "id": c["id"],
+                "from_name": from_data.get("name", "Facebook User"),
+                "message": c.get("message", ""),
+                "created_time": c.get("created_time", ""),
+                "like_count": c.get("like_count", 0),
+                "fb_url": fb_url
+            })    
+            total_likes += c.get("like_count", 0)
 
         return render_template_string(
             BASE_TEMPLATE,
