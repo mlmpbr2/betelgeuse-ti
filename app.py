@@ -42,16 +42,12 @@ WEBHOOK_VERIFY_TOKEN = os.environ.get("WEBHOOK_VERIFY_TOKEN", "betelgeuse_webhoo
 WEBHOOK_APP_SECRET = os.environ.get("FB_APP_SECRET", "")
 WEBHOOK_LOG_FILE = "webhook_comments.json"
 
-# Cache files
-SENTIMENT_CACHE_FILE = "sentiment_cache.json"
-LAST_CHECK_FILE = "last_check.json"
-
 # =============================================================================
-# SENTIMENT ANALYSIS (Gemini)
+# SENTIMENT ANALYSIS (Gemini) - NO CACHE (Vercel read-only filesystem)
 # =============================================================================
 
 def analyze_sentiment(text):
-    """Analyze sentiment using Gemini API"""
+    """Analyze sentiment using Gemini API - no cache, direct call"""
     if not GOOGLE_API_KEY or not text:
         return "NEUTRO"
 
@@ -84,46 +80,9 @@ def analyze_sentiment(text):
         print(f"Erro Gemini: {e}")
         return "NEUTRO"
 
-def load_sentiment_cache():
-    """Load cached sentiment analysis"""
-    try:
-        if os.path.exists(SENTIMENT_CACHE_FILE):
-            with open(SENTIMENT_CACHE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-    except:
-        pass
-    return {}
-
-def save_sentiment_cache(cache):
-    """Save sentiment cache"""
-    try:
-        with open(SENTIMENT_CACHE_FILE, "w", encoding="utf-8") as f:
-            json.dump(cache, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        print(f"Erro cache: {e}")
-
 def get_sentiment(text, comment_id):
-    """Get sentiment with caching"""
-    cache = load_sentiment_cache()
-
-    if comment_id in cache:
-        return cache[comment_id]["sentiment"]
-
-    sentiment = analyze_sentiment(text)
-    cache[comment_id] = {
-        "sentiment": sentiment,
-        "text": text[:100],  # Store truncated text for verification
-        "analyzed_at": datetime.now().isoformat()
-    }
-
-    # Keep only last 1000 entries
-    if len(cache) > 1000:
-        oldest = sorted(cache.keys(), key=lambda k: cache[k].get("analyzed_at", ""))[:100]
-        for k in oldest:
-            del cache[k]
-
-    save_sentiment_cache(cache)
-    return sentiment
+    """Get sentiment - no cache, direct analysis every time"""
+    return analyze_sentiment(text)
 
 # =============================================================================
 # n8n WEBHOOK
