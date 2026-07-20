@@ -614,19 +614,19 @@ COMMENTS_TEMPLATE = """
 
     <div class="stats-grid">
         <div class="stat-box positive">
-            <div class="stat-value positive">{{ sentiment_counts.positive }}</div>
+            <div class="stat-value positive">{{ sentiment_counts.positive|default(0) }}</div>
             <div class="stat-label">😊 Positivos</div>
-            <div style="font-size: 11px; color: #2e7d32;">{{ sentiment_pct.positive }}%</div>
+            <div style="font-size: 11px; color: #2e7d32;">{{ sentiment_pct.positive|default(0) }}%</div>
         </div>
         <div class="stat-box neutral">
-            <div class="stat-value neutral">{{ sentiment_counts.neutral }}</div>
+            <div class="stat-value neutral">{{ sentiment_counts.neutral|default(0) }}</div>
             <div class="stat-label">😐 Neutros</div>
-            <div style="font-size: 11px; color: #f9a825;">{{ sentiment_pct.neutral }}%</div>
+            <div style="font-size: 11px; color: #f9a825;">{{ sentiment_pct.neutral|default(0) }}%</div>
         </div>
         <div class="stat-box negative">
-            <div class="stat-value negative">{{ sentiment_counts.negative }}</div>
+            <div class="stat-value negative">{{ sentiment_counts.negative|default(0) }}</div>
             <div class="stat-label">😠 Negativos</div>
-            <div style="font-size: 11px; color: #c62828;">{{ sentiment_pct.negative }}%</div>
+            <div style="font-size: 11px; color: #c62828;">{{ sentiment_pct.negative|default(0) }}%</div>
         </div>
         <div class="stat-box">
             <div class="stat-value">{{ comments|length }}</div>
@@ -636,21 +636,22 @@ COMMENTS_TEMPLATE = """
     </div>
 
     <div class="filter-buttons">
-        <button class="filter-btn active" data-filter="all" onclick="filterComments('all')">Todos</button>
-        <button class="filter-btn positive" data-filter="positive" onclick="filterComments('positive')">😊 Positivos</button>
-        <button class="filter-btn neutral" data-filter="neutral" onclick="filterComments('neutral')">😐 Neutros</button>
-        <button class="filter-btn negative" data-filter="negative" onclick="filterComments('negative')">😠 Negativos</button>
+        <button class="filter-btn active" data-filter="all" onclick="filterComments('all')">Todos ({{ comments|length }})</button>
+        <button class="filter-btn positive" data-filter="positive" onclick="filterComments('positive')">😊 Positivos ({{ sentiment_counts.positive|default(0) }})</button>
+        <button class="filter-btn neutral" data-filter="neutral" onclick="filterComments('neutral')">😐 Neutros ({{ sentiment_counts.neutral|default(0) }})</button>
+        <button class="filter-btn negative" data-filter="negative" onclick="filterComments('negative')">😠 Negativos ({{ sentiment_counts.negative|default(0) }})</button>
     </div>
 
     {% for comment in comments %}
-    <div class="comment-card {{ comment.sentiment.lower() }}" id="comment-{{ comment.id }}" data-sentiment="{{ comment.sentiment.lower() }}">
+    {% set sentiment = comment.sentiment|default('NEUTRO')|lower %}
+    <div class="comment-card {{ sentiment }}" id="comment-{{ comment.id }}" data-sentiment="{{ sentiment }}">
         <div class="comment-header">
             <div class="comment-avatar">{{ comment.from_name[0] if comment.from_name else '?' }}</div>
             <div>
                 <div class="comment-author">{{ comment.from_name or 'Facebook User' }}</div>
                 <div class="comment-id">ID: {{ comment.id }}</div>
             </div>
-            <span class="sentiment-badge sentiment-{{ comment.sentiment.lower() }}">{{ comment.sentiment }}</span>
+            <span class="sentiment-badge sentiment-{{ sentiment }}">{{ comment.sentiment|default('NEUTRO') }}</span>
         </div>
         <div class="comment-text">{{ comment.message }}</div>
         <div class="comment-meta">
