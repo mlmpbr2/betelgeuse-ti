@@ -84,6 +84,19 @@ def get_sentiment(text, comment_id):
     """Get sentiment - no cache, direct analysis every time"""
     return analyze_sentiment(text)
 
+# Mapa PT -> EN: o Gemini responde em português (POSITIVO/NEUTRO/NEGATIVO),
+# mas os contadores e as classes CSS do template usam inglês (positive/neutral/negative)
+SENTIMENT_EN = {"POSITIVO": "positive", "NEUTRO": "neutral", "NEGATIVO": "negative"}
+
+# Cache em memória (filesystem do Vercel é read-only)
+_SENTIMENT_CACHE = {}
+
+def load_sentiment_cache():
+    return _SENTIMENT_CACHE
+
+def save_sentiment_cache(cache):
+    pass  # sem persistência em disco no Vercel
+
 # =============================================================================
 # n8n WEBHOOK
 # =============================================================================
@@ -643,7 +656,7 @@ COMMENTS_TEMPLATE = """
     </div>
 
     {% for comment in comments %}
-    {% set sentiment = comment.sentiment|default('NEUTRO')|lower %}
+    {% set sentiment = comment.sentiment_en|default('neutral') %}
     <div class="comment-card {{ sentiment }}" id="comment-{{ comment.id }}" data-sentiment="{{ sentiment }}">
         <div class="comment-header">
             <div class="comment-avatar">{{ comment.from_name[0] if comment.from_name else '?' }}</div>
@@ -1021,7 +1034,8 @@ def comments():
 
             # Analyze sentiment
             sentiment = get_sentiment(c.get("message", ""), c["id"])
-            sentiment_counts[sentiment.lower()] += 1
+            sentiment_en = SENTIMENT_EN.get(sentiment, "neutral")
+            sentiment_counts[sentiment_en] += 1
 
             comments.append({
                 "id": c["id"],
@@ -1030,8 +1044,9 @@ def comments():
                 "created_time": c.get("created_time", ""),
                 "like_count": c.get("like_count", 0),
                 "fb_url": fb_url,
-                "sentiment": sentiment
-            })    
+                "sentiment": sentiment,
+                "sentiment_en": sentiment_en
+            })
             total_likes += c.get("like_count", 0)
 
         # Calculate percentages
