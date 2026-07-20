@@ -1,6 +1,6 @@
 """
-Betelgeuse TI Comment Moderator + Webhook Receiver
-Flask app with Meta App Review compliance features + real-time comment webhooks
+Betelgeuse TI Comment Moderator + Sentiment Analysis + n8n Integration
+Flask app with Meta App Review compliance + real-time sentiment KPIs
 """
 
 import os
@@ -8,68 +8,139 @@ import json
 import requests
 import hashlib
 import hmac
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, redirect, request, session, render_template_string, url_for, jsonify
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-key-change-in-prod")
 
-# Facebook App Config
+# =============================================================================
+# CONFIG
+# =============================================================================
 FB_APP_ID = os.environ.get("FB_APP_ID", "YOUR_APP_ID")
 FB_APP_SECRET = os.environ.get("FB_APP_SECRET", "YOUR_APP_SECRET")
 FB_API_VERSION = "v19.0"
 FB_BASE_URL = f"https://graph.facebook.com/{FB_API_VERSION}"
-
-# Redirect URI must match Facebook App settings
 REDIRECT_URI = os.environ.get("REDIRECT_URI", "https://betelgeuse-ti.vercel.app/callback")
 
-# Required permissions
 REQUIRED_SCOPES = [
     "pages_show_list",
     "pages_read_engagement", 
     "pages_read_user_content"
 ]
 
-# =============================================================================
-# WEBHOOK CONFIG
-# =============================================================================
+# Gemini Config
+GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
+GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
+
+# n8n Config
+N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "")
+
+# Webhook Config
 WEBHOOK_VERIFY_TOKEN = os.environ.get("WEBHOOK_VERIFY_TOKEN", "betelgeuse_webhook_2026")
 WEBHOOK_APP_SECRET = os.environ.get("FB_APP_SECRET", "")
 WEBHOOK_LOG_FILE = "webhook_comments.json"
 
-def save_webhook_payload(payload):
-    """Salva o payload recebido em arquivo JSON"""
+# Cache files
+SENTIMENT_CACHE_FILE = "sentiment_cache.json"
+LAST_CHECK_FILE = "last_check.json"
+
+# =============================================================================
+# SENTIMENT ANALYSIS (Gemini)
+# =============================================================================
+
+def analyze_sentiment(text):
+    """Analyze sentiment using Gemini API"""
+    if not GOOGLE_API_KEY or not text:
+        return "NEUTRO"
+
     try:
-        if os.path.exists(WEBHOOK_LOG_FILE):
-            with open(WEBHOOK_LOG_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        else:
-            data = []
-
-        entry = {
-            "received_at": datetime.now().isoformat(),
-            "payload": payload
+        url = f"{GEMINI_URL}?key={GOOGLE_API_KEY}"
+        payload = {
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": f"Classifique o sentimento deste comentario em UMA palavra apenas: POSITIVO, NEUTRO ou NEGATIVO. Comentario: {text}"}]
+            }]
         }
-        data.append(entry)
-        data = data[-100:]  # Mantém apenas últimos 100
 
-        with open(WEBHOOK_LOG_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        resp = requests.post(url, json=payload, timeout=30)
+        data = resp.json()
+
+        if "candidates" in data and data["candidates"]:
+            result_text = data["candidates"][0]["content"]["parts"][0]["text"].upper().strip()
+
+            # Extract sentiment from response
+            if "POSITIVO" in result_text:
+                return "POSITIVO"
+            elif "NEGATIVO" in result_text:
+                return "NEGATIVO"
+            else:
+                return "NEUTRO"
+
+        return "NEUTRO"
+
     except Exception as e:
-        print(f"Erro ao salvar webhook: {e}")
+        print(f"Erro Gemini: {e}")
+        return "NEUTRO"
 
-def verify_signature(payload_body, signature):
-    """Valida a assinatura SHA256 da Meta"""
-    if not WEBHOOK_APP_SECRET:
-        return True
+def load_sentiment_cache():
+    """Load cached sentiment analysis"""
+    try:
+        if os.path.exists(SENTIMENT_CACHE_FILE):
+            with open(SENTIMENT_CACHE_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+    except:
+        pass
+    return {}
 
-    expected_signature = hmac.new(
-        WEBHOOK_APP_SECRET.encode('utf-8'),
-        payload_body,
-        hashlib.sha256
-    ).hexdigest()
+def save_sentiment_cache(cache):
+    """Save sentiment cache"""
+    try:
+        with open(SENTIMENT_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Erro cache: {e}")
 
-    return hmac.compare_digest(f"sha256={expected_signature}", signature)
+def get_sentiment(text, comment_id):
+    """Get sentiment with caching"""
+    cache = load_sentiment_cache()
+
+    if comment_id in cache:
+        return cache[comment_id]["sentiment"]
+
+    sentiment = analyze_sentiment(text)
+    cache[comment_id] = {
+        "sentiment": sentiment,
+        "text": text[:100],  # Store truncated text for verification
+        "analyzed_at": datetime.now().isoformat()
+    }
+
+    # Keep only last 1000 entries
+    if len(cache) > 1000:
+        oldest = sorted(cache.keys(), key=lambda k: cache[k].get("analyzed_at", ""))[:100]
+        for k in oldest:
+            del cache[k]
+
+    save_sentiment_cache(cache)
+    return sentiment
+
+# =============================================================================
+# n8n WEBHOOK
+# =============================================================================
+
+def send_to_n8n(summary_data):
+    """Send summary to n8n webhook"""
+    if not N8N_WEBHOOK_URL:
+        print("N8N_WEBHOOK_URL não configurado")
+        return False
+
+    try:
+        resp = requests.post(N8N_WEBHOOK_URL, json=summary_data, timeout=30)
+        return resp.status_code == 200
+    except Exception as e:
+        print(f"Erro n8n: {e}")
+        return False
 
 # =============================================================================
 # HTML TEMPLATES
@@ -77,11 +148,11 @@ def verify_signature(payload_body, signature):
 
 BASE_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="en">
+<html lang="pt-BR">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Betelgeuse TI - Comment Moderator</title>
+    <title>Betelgeuse TI - Moderador de Comentários</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -233,6 +304,10 @@ BASE_TEMPLATE = """
             margin-bottom: 12px;
             border-left: 4px solid #1877f2;
         }
+        .comment-card.positive { border-left-color: #2e7d32; background: #e8f5e9; }
+        .comment-card.neutral { border-left-color: #f9a825; background: #fff8e1; }
+        .comment-card.negative { border-left-color: #c62828; background: #ffebee; }
+
         .comment-header {
             display: flex;
             align-items: center;
@@ -266,21 +341,17 @@ BASE_TEMPLATE = """
             margin-top: 10px;
         }
 
-        .hidden-comment {
-            opacity: 0.4;
-            border-left-color: #ef4444;
-        }
-        .hidden-label {
-            display: inline-flex;
-            align-items: center;
-            gap: 4px;
-            background: #fee2e2;
-            color: #991b1b;
-            padding: 4px 10px;
+        .sentiment-badge {
+            display: inline-block;
+            padding: 2px 8px;
             border-radius: 4px;
-            font-size: 12px;
-            font-weight: 600;
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
         }
+        .sentiment-positive { background: #2e7d32; color: white; }
+        .sentiment-neutral { background: #f9a825; color: white; }
+        .sentiment-negative { background: #c62828; color: white; }
 
         .stats-grid {
             display: grid;
@@ -296,7 +367,13 @@ BASE_TEMPLATE = """
             box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             border-top: 3px solid #1877f2;
         }
+        .stat-box.positive { border-top-color: #2e7d32; }
+        .stat-box.neutral { border-top-color: #f9a825; }
+        .stat-box.negative { border-top-color: #c62828; }
         .stat-value { font-size: 28px; font-weight: 700; color: #1877f2; }
+        .stat-value.positive { color: #2e7d32; }
+        .stat-value.neutral { color: #f9a825; }
+        .stat-value.negative { color: #c62828; }
         .stat-label { font-size: 12px; color: #65676b; text-transform: uppercase; }
 
         .footer {
@@ -348,12 +425,36 @@ BASE_TEMPLATE = """
             font-weight: 600;
             margin-bottom: 16px;
         }
+
+        .filter-buttons {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+        }
+        .filter-btn {
+            padding: 8px 16px;
+            border-radius: 20px;
+            border: 1px solid #ddd;
+            background: white;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+        }
+        .filter-btn.active {
+            background: #1877f2;
+            color: white;
+            border-color: #1877f2;
+        }
+        .filter-btn.positive.active { background: #2e7d32; border-color: #2e7d32; }
+        .filter-btn.neutral.active { background: #f9a825; border-color: #f9a825; }
+        .filter-btn.negative.active { background: #c62828; border-color: #c62828; }
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🌟 Betelgeuse TI</h1>
-        <p>COMMENT MODERATOR</p>
+        <p>MODERADOR DE COMENTÁRIOS COM ANÁLISE DE SENTIMENTO</p>
     </div>
     <div class="container">
         {{ content | safe }}
@@ -374,9 +475,21 @@ BASE_TEMPLATE = """
                 card.classList.add('hidden-comment');
                 const actions = card.querySelector('.comment-actions');
                 if (actions) {
-                    actions.innerHTML = '<span class="hidden-label">🚫 Hidden by moderator (client-side only)</span>';
+                    actions.innerHTML = '<span class="hidden-label">🚫 Ocultado pelo moderador</span>';
                 }
             }
+        }
+        function filterComments(sentiment) {
+            const cards = document.querySelectorAll('.comment-card');
+            cards.forEach(card => {
+                if (sentiment === 'all' || card.dataset.sentiment === sentiment) {
+                    card.style.display = 'block';
+                } else {
+                    card.style.display = 'none';
+                }
+            });
+            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
+            document.querySelector('.filter-btn[data-filter="' + sentiment + '"').classList.add('active');
         }
     </script>
 </body>
@@ -386,27 +499,27 @@ BASE_TEMPLATE = """
 HOME_TEMPLATE = """
 <div class="card" style="text-align: center; max-width: 600px; margin: 40px auto;">
     <div class="permission-badge">App Review Screencast</div>
-    <h2 style="font-size: 22px; margin-bottom: 12px;">Real-Time Comment Moderation</h2>
+    <h2 style="font-size: 22px; margin-bottom: 12px;">Moderação de Comentários com IA</h2>
     <p style="color: #65676b; margin-bottom: 24px;">
-        Monitor and moderate comments on Facebook Pages you administer.
-        No data stored. Real-time processing only.
+        Monitore e analise comentários em tempo real com classificação de sentimento (Positivo, Neutro, Negativo).
+        Processamento em tempo real. Sem armazenamento de dados.
     </p>
 
     <div style="text-align: left; margin-bottom: 24px;">
         <div class="privacy-card">
-            <h3>🔐 Requested Permissions</h3>
+            <h3>🔐 Permissões Solicitadas</h3>
             <div style="margin-top: 12px;">
                 <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
                     <strong style="color: #1877f2;">pages_read_engagement</strong>
-                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Read posts and metrics to select which post to moderate</p>
+                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Ler posts e métricas para selecionar qual post moderar</p>
                 </div>
                 <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
                     <strong style="color: #1877f2;">pages_read_user_content</strong>
-                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Read comments with author name, message, and date for moderation</p>
+                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Ler comentários com nome do autor, mensagem e data para moderação</p>
                 </div>
                 <div style="background: white; padding: 12px; border-radius: 8px;">
                     <strong style="color: #1877f2;">pages_show_list</strong>
-                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Display list of Pages you manage</p>
+                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Exibir lista de Páginas que você gerencia</p>
                 </div>
             </div>
         </div>
@@ -414,16 +527,16 @@ HOME_TEMPLATE = """
 
     <a href="/login" class="btn btn-primary" style="font-size: 16px;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-        Log in with Facebook
+        Entrar com Facebook
     </a>
 
     <div class="privacy-card" style="margin-top: 24px; text-align: left;">
-        <h3>🔒 Privacy Commitment</h3>
+        <h3>🔒 Compromisso de Privacidade</h3>
         <ul>
-            <li>No data stored — real-time processing only</li>
-            <li>Session cleared on logout</li>
-            <li>Revoke access anytime in Facebook Settings</li>
-            <li>Company verified by CNPJ 51.770.524/0001-87</li>
+            <li>Sem armazenamento de dados — processamento em tempo real</li>
+            <li>Sessão limpa ao sair</li>
+            <li>Revogue acesso a qualquer momento nas Configurações do Facebook</li>
+            <li>Empresa verificada por CNPJ 51.770.524/0001-87</li>
         </ul>
     </div>
 </div>
@@ -433,30 +546,30 @@ DASHBOARD_TEMPLATE = """
 <div class="step-indicator">
     <div class="step active">
         <div class="step-number">1</div>
-        <span>Choose Page</span>
+        <span>Escolher Página</span>
     </div>
     <div class="step">
         <div class="step-number">2</div>
-        <span>Choose Post</span>
+        <span>Escolher Post</span>
     </div>
     <div class="step">
         <div class="step-number">3</div>
-        <span>Moderate Comments</span>
+        <span>Moderar Comentários</span>
     </div>
 </div>
 
 <div class="alert alert-success">
-    ✅ <strong>Successfully authenticated.</strong> Select a Page to start moderating.
+    ✅ <strong>Autenticado com sucesso.</strong> Selecione uma Página para começar a moderar.
 </div>
 
 <div class="card">
     <span class="permission-badge green">pages_show_list</span>
-    <div class="card-title">📋 Choose Your Page</div>
-    <p class="card-desc">Select a Facebook Page to load posts for moderation.</p>
+    <div class="card-title">📋 Escolha sua Página</div>
+    <p class="card-desc">Selecione uma Página do Facebook para carregar posts para moderação.</p>
 
     <form action="/posts" method="get">
         <select name="page_id" required onchange="this.form.submit()">
-            <option value="">-- Select a Page --</option>
+            <option value="">-- Selecione uma Página --</option>
             {% for page in pages %}
             <option value="{{ page.id }}">{{ page.name }}</option>
             {% endfor %}
@@ -464,51 +577,51 @@ DASHBOARD_TEMPLATE = """
     </form>
 
     <p style="margin-top: 12px; font-size: 13px; color: #65676b;">
-        {{ pages|length }} Page(s) found
+        {{ pages|length }} Página(s) encontrada(s)
     </p>
 </div>
 
 <div style="text-align: center;">
-    <a href="/logout" class="btn btn-outline">↩️ Disconnect</a>
+    <a href="/logout" class="btn btn-outline">↩️ Desconectar</a>
 </div>
 """
 
 POSTS_TEMPLATE = """
-<a href="/" class="back-btn">← Back to Pages</a>
+<a href="/" class="back-btn">← Voltar para Páginas</a>
 
 <div class="step-indicator">
     <div class="step">
         <div class="step-number">1</div>
-        <span>Choose Page</span>
+        <span>Escolher Página</span>
     </div>
     <div class="step active">
         <div class="step-number">2</div>
-        <span>Choose Post</span>
+        <span>Escolher Post</span>
     </div>
     <div class="step">
         <div class="step-number">3</div>
-        <span>Moderate Comments</span>
+        <span>Moderar Comentários</span>
     </div>
 </div>
 
 <div class="card">
     <span class="permission-badge orange">pages_read_engagement</span>
-    <div class="card-title">📝 Choose a Post</div>
-    <p class="card-desc">Select a post to view and moderate its comments.</p>
+    <div class="card-title">📝 Escolha um Post</div>
+    <p class="card-desc">Selecione um post para visualizar e moderar seus comentários com análise de sentimento.</p>
 
     <div class="post-grid">
         {% for post in posts %}
         <div class="post-card" onclick="window.location.href='/comments?post_id={{ post.id }}&page_id={{ page_id }}'">
             {% if post.picture %}
-            <img src="{{ post.picture }}" alt="Post image">
+            <img src="{{ post.picture }}" alt="Imagem do post">
             {% else %}
-            <div style="height: 160px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;">📄 Text Post</div>
+            <div style="height: 160px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;">📄 Post de Texto</div>
             {% endif %}
             <div class="post-card-body">
                 <div class="post-card-title">{{ post.message[:60] }}{% if post.message|length > 60 %}...{% endif %}</div>
                 <div class="post-card-meta">
                     📅 {{ post.created_time[:10] }} 
-                    💬 {{ post.comments_count }} comments
+                    💬 {{ post.comments_count }} comentários
                 </div>
             </div>
         </div>
@@ -518,70 +631,82 @@ POSTS_TEMPLATE = """
 """
 
 COMMENTS_TEMPLATE = """
-<a href="/posts?page_id={{ page_id }}" class="back-btn">← Back to Posts</a>
+<a href="/posts?page_id={{ page_id }}" class="back-btn">← Voltar para Posts</a>
 
 <div class="step-indicator">
     <div class="step">
         <div class="step-number">1</div>
-        <span>Choose Page</span>
+        <span>Escolher Página</span>
     </div>
     <div class="step">
         <div class="step-number">2</div>
-        <span>Choose Post</span>
+        <span>Escolher Post</span>
     </div>
     <div class="step active">
         <div class="step-number">3</div>
-        <span>Moderate Comments</span>
+        <span>Moderar Comentários</span>
     </div>
 </div>
 
 <div class="card">
     <span class="permission-badge red">pages_read_user_content</span>
-    <div class="card-title">💬 Moderate Comments</div>
-    <p class="card-desc">Review comments in real time. Hide inappropriate content.</p>
+    <div class="card-title">💬 Moderar Comentários com Análise de Sentimento</div>
+    <p class="card-desc">Revise comentários em tempo real. Classificação automática: Positivo, Neutro, Negativo.</p>
 
     <div class="stats-grid">
+        <div class="stat-box positive">
+            <div class="stat-value positive">{{ sentiment_counts.positive }}</div>
+            <div class="stat-label">😊 Positivos</div>
+            <div style="font-size: 11px; color: #2e7d32;">{{ sentiment_pct.positive }}%</div>
+        </div>
+        <div class="stat-box neutral">
+            <div class="stat-value neutral">{{ sentiment_counts.neutral }}</div>
+            <div class="stat-label">😐 Neutros</div>
+            <div style="font-size: 11px; color: #f9a825;">{{ sentiment_pct.neutral }}%</div>
+        </div>
+        <div class="stat-box negative">
+            <div class="stat-value negative">{{ sentiment_counts.negative }}</div>
+            <div class="stat-label">😠 Negativos</div>
+            <div style="font-size: 11px; color: #c62828;">{{ sentiment_pct.negative }}%</div>
+        </div>
         <div class="stat-box">
             <div class="stat-value">{{ comments|length }}</div>
-            <div class="stat-label">Total Comments</div>
-        </div>
-        <div class="stat-box" style="border-top-color: #2e7d32;">
-            <div class="stat-value" style="color: #2e7d32;">{{ total_likes }}</div>
-            <div class="stat-label">Total Likes</div>
-        </div>
-        <div class="stat-box" style="border-top-color: #ef6c00;">
-            <div class="stat-value" style="color: #ef6c00;">0</div>
-            <div class="stat-label">Flagged</div>
-        </div>
-        <div class="stat-box" style="border-top-color: #c62828;">
-            <div class="stat-value" style="color: #c62828;">0%</div>
-            <div class="stat-label">Negative Rate</div>
+            <div class="stat-label">💬 Total</div>
+            <div style="font-size: 11px; color: #1877f2;">100%</div>
         </div>
     </div>
 
+    <div class="filter-buttons">
+        <button class="filter-btn active" data-filter="all" onclick="filterComments('all')">Todos</button>
+        <button class="filter-btn positive" data-filter="positive" onclick="filterComments('positive')">😊 Positivos</button>
+        <button class="filter-btn neutral" data-filter="neutral" onclick="filterComments('neutral')">😐 Neutros</button>
+        <button class="filter-btn negative" data-filter="negative" onclick="filterComments('negative')">😠 Negativos</button>
+    </div>
+
     {% for comment in comments %}
-    <div class="comment-card" id="comment-{{ comment.id }}">
+    <div class="comment-card {{ comment.sentiment.lower() }}" id="comment-{{ comment.id }}" data-sentiment="{{ comment.sentiment.lower() }}">
         <div class="comment-header">
             <div class="comment-avatar">{{ comment.from_name[0] if comment.from_name else '?' }}</div>
             <div>
                 <div class="comment-author">{{ comment.from_name or 'Facebook User' }}</div>
                 <div class="comment-id">ID: {{ comment.id }}</div>
             </div>
+            <span class="sentiment-badge sentiment-{{ comment.sentiment.lower() }}">{{ comment.sentiment }}</span>
         </div>
         <div class="comment-text">{{ comment.message }}</div>
         <div class="comment-meta">
             <span>📅 {{ comment.created_time[:10] }}</span>
-            <span>❤️ {{ comment.like_count }} likes</span>
+            <span>❤️ {{ comment.like_count }} curtidas</span>
             <span>⏰ {{ comment.created_time }}</span>
         </div>
         <div class="comment-actions">
             <button class="btn btn-danger" onclick="hideComment('{{ comment.id }}')">
-                🚫 Hide Comment
+                🚫 Ocultar Comentário
             </button>
             <a href="{{ comment.fb_url }}" 
                target="_blank" 
                class="btn btn-outline">
-                🔗 View on Facebook
+                🔗 Ver no Facebook
             </a>
         </div>
     </div>
@@ -917,6 +1042,7 @@ def comments():
 
         comments = []
         total_likes = 0
+        sentiment_counts = {"positive": 0, "neutral": 0, "negative": 0}
 
         for c in comments_data:
             from_data = c.get("from", {})
@@ -933,15 +1059,28 @@ def comments():
             if isinstance(fb_url, str):
                 fb_url = fb_url.replace("https://www.facebook.com/https://www.facebook.com/", "https://www.facebook.com/")
 
+            # Analyze sentiment
+            sentiment = get_sentiment(c.get("message", ""), c["id"])
+            sentiment_counts[sentiment.lower()] += 1
+
             comments.append({
                 "id": c["id"],
                 "from_name": from_data.get("name", "Facebook User"),
                 "message": c.get("message", ""),
                 "created_time": c.get("created_time", ""),
                 "like_count": c.get("like_count", 0),
-                "fb_url": fb_url
+                "fb_url": fb_url,
+                "sentiment": sentiment
             })    
             total_likes += c.get("like_count", 0)
+
+        # Calculate percentages
+        total = len(comments)
+        sentiment_pct = {
+            "positive": round((sentiment_counts["positive"] / total * 100), 1) if total > 0 else 0,
+            "neutral": round((sentiment_counts["neutral"] / total * 100), 1) if total > 0 else 0,
+            "negative": round((sentiment_counts["negative"] / total * 100), 1) if total > 0 else 0
+        }
 
         return render_template_string(
             BASE_TEMPLATE,
@@ -949,7 +1088,9 @@ def comments():
                 COMMENTS_TEMPLATE,
                 comments=comments,
                 page_id=page_id,
-                total_likes=total_likes
+                total_likes=total_likes,
+                sentiment_counts=sentiment_counts,
+                sentiment_pct=sentiment_pct
             )
         )
 
@@ -982,15 +1123,11 @@ def data_use():
     return render_template_string(BASE_TEMPLATE, content=DATA_USE_TEMPLATE)
 
 # =============================================================================
-# WEBHOOK ROUTES - Novo: recebe comentários em tempo real da Meta
+# WEBHOOK ROUTES
 # =============================================================================
 
 @app.route("/webhook", methods=["GET"])
 def webhook_verify():
-    """
-    GET /webhook - Verificação da Meta
-    A Meta envia: hub.mode=subscribe, hub.challenge=XXX, hub.verify_token=YYY
-    """
     mode = request.args.get("hub.mode")
     token = request.args.get("hub.verify_token")
     challenge = request.args.get("hub.challenge")
@@ -1004,9 +1141,6 @@ def webhook_verify():
 
 @app.route("/webhook", methods=["POST"])
 def webhook_receive():
-    """
-    POST /webhook - Recebe notificações de comentários da Meta
-    """
     signature = request.headers.get("X-Hub-Signature-256", "")
     payload_body = request.get_data()
 
@@ -1028,7 +1162,6 @@ def webhook_receive():
 
 @app.route("/webhook/logs")
 def webhook_logs():
-    """Visualiza os logs de comentários recebidos (para debug)"""
     try:
         if os.path.exists(WEBHOOK_LOG_FILE):
             with open(WEBHOOK_LOG_FILE, "r", encoding="utf-8") as f:
@@ -1036,6 +1169,136 @@ def webhook_logs():
             return jsonify(data)
         else:
             return jsonify([])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+# =============================================================================
+# POLLING + SENTIMENT + n8n ROUTE
+# =============================================================================
+
+@app.route("/poll_comments")
+def poll_comments():
+    """
+    Polling endpoint: Busca comentários, analisa sentimento, envia resumo ao n8n
+    Chamar a cada 1 hora (195 chamadas/hora limite)
+    """
+    if "access_token" not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+
+    page_id = request.args.get("page_id") or session.get("current_page_id")
+    if not page_id:
+        return jsonify({"error": "No page selected"}), 400
+
+    try:
+        # Get page token
+        resp = requests.get(
+            f"{FB_BASE_URL}/me/accounts",
+            params={"access_token": session["access_token"]},
+            timeout=30
+        )
+        accounts = resp.json().get("data", [])
+        page_token = None
+        for acc in accounts:
+            if acc["id"] == page_id:
+                page_token = acc["access_token"]
+                break
+
+        if not page_token:
+            return jsonify({"error": "Could not get page token"}), 400
+
+        # Get posts from last 24h
+        since_time = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
+        resp = requests.get(
+            f"{FB_BASE_URL}/{page_id}/posts",
+            params={
+                "access_token": page_token,
+                "fields": "id,message,created_time",
+                "since": since_time,
+                "limit": 10
+            },
+            timeout=30
+        )
+        posts = resp.json().get("data", [])
+
+        all_comments = []
+        total_new = 0
+
+        for post in posts:
+            post_id = post["id"]
+
+            # Get comments (max 100 per post)
+            resp = requests.get(
+                f"{FB_BASE_URL}/{post_id}/comments",
+                params={
+                    "access_token": page_token,
+                    "fields": "id,from,message,created_time,like_count",
+                    "limit": 100,
+                    "order": "reverse_chronological"
+                },
+                timeout=30
+            )
+            comments = resp.json().get("data", [])
+
+            for c in comments:
+                comment_id = c["id"]
+                message = c.get("message", "")
+
+                # Check if already analyzed
+                cache = load_sentiment_cache()
+                if comment_id in cache:
+                    sentiment = cache[comment_id]["sentiment"]
+                else:
+                    sentiment = analyze_sentiment(message)
+                    cache[comment_id] = {
+                        "sentiment": sentiment,
+                        "text": message[:100],
+                        "analyzed_at": datetime.now().isoformat()
+                    }
+                    save_sentiment_cache(cache)
+                    total_new += 1
+
+                all_comments.append({
+                    "id": comment_id,
+                    "post_id": post_id,
+                    "author": c.get("from", {}).get("name", "Facebook User"),
+                    "message": message,
+                    "sentiment": sentiment,
+                    "likes": c.get("like_count", 0),
+                    "created_time": c.get("created_time", "")
+                })
+
+        # Calculate summary
+        sentiment_counts = {"POSITIVO": 0, "NEUTRO": 0, "NEGATIVO": 0}
+        for c in all_comments:
+            sentiment_counts[c["sentiment"]] += 1
+
+        total = len(all_comments)
+        summary = {
+            "tipo": "resumo_comentarios",
+            "pagina": page_id,
+            "periodo": {
+                "inicio": since_time,
+                "fim": datetime.now().isoformat()
+            },
+            "total_comentarios": total,
+            "novos_analisados": total_new,
+            "sentimentos": sentiment_counts,
+            "percentuais": {
+                "positivo": round(sentiment_counts["POSITIVO"] / total * 100, 1) if total > 0 else 0,
+                "neutro": round(sentiment_counts["NEUTRO"] / total * 100, 1) if total > 0 else 0,
+                "negativo": round(sentiment_counts["NEGATIVO"] / total * 100, 1) if total > 0 else 0
+            },
+            "alertas": [c for c in all_comments if c["sentiment"] == "NEGATIVO"][:5],
+            "top_positivos": [c for c in all_comments if c["sentiment"] == "POSITIVO"][:3],
+            "resumo_executivo": f"{total} comentários analisados. {sentiment_counts['POSITIVO']} positivos, {sentiment_counts['NEGATIVO']} negativos."
+        }
+
+        # Send to n8n if there are new comments
+        if total_new > 0 and N8N_WEBHOOK_URL:
+            send_to_n8n(summary)
+
+        return jsonify(summary)
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
