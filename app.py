@@ -42,6 +42,27 @@ WEBHOOK_VERIFY_TOKEN = os.environ.get("WEBHOOK_VERIFY_TOKEN", "betelgeuse_webhoo
 WEBHOOK_APP_SECRET = os.environ.get("FB_APP_SECRET", "")
 WEBHOOK_LOG_FILE = "webhook_comments.json"
 
+# Page Access Token fixo via variável de ambiente do Vercel (Graph API)
+# Aceita as duas grafias por segurança; se não existir, cai no fluxo /me/accounts
+PAGE_ACCESS_TOKEN_ENV = os.environ.get("PAGE_ACCESS_TOKEN") or os.environ.get("PAGE_ACESS_TOKEN") or ""
+
+def get_page_token(page_id):
+    """Retorna o Page Access Token.
+    Prioridade: 1) variável de ambiente do Vercel; 2) token obtido via /me/accounts da sessão."""
+    if PAGE_ACCESS_TOKEN_ENV:
+        return PAGE_ACCESS_TOKEN_ENV
+
+    resp = requests.get(
+        f"{FB_BASE_URL}/me/accounts",
+        params={"access_token": session["access_token"]},
+        timeout=30
+    )
+    accounts = resp.json().get("data", [])
+    for acc in accounts:
+        if acc["id"] == page_id:
+            return acc["access_token"]
+    return None
+
 # =============================================================================
 # SENTIMENT ANALYSIS (Gemini) - NO CACHE (Vercel read-only filesystem)
 # =============================================================================
@@ -83,6 +104,19 @@ def analyze_sentiment(text):
 def get_sentiment(text, comment_id):
     """Get sentiment - no cache, direct analysis every time"""
     return analyze_sentiment(text)
+
+# Mapa PT -> EN: o Gemini responde em português (POSITIVO/NEUTRO/NEGATIVO),
+# mas os contadores e as classes CSS do template usam inglês (positive/neutral/negative)
+SENTIMENT_EN = {"POSITIVO": "positive", "NEUTRO": "neutral", "NEGATIVO": "negative"}
+
+# Cache em memória (filesystem do Vercel é read-only)
+_SENTIMENT_CACHE = {}
+
+def load_sentiment_cache():
+    return _SENTIMENT_CACHE
+
+def save_sentiment_cache(cache):
+    pass  # sem persistência em disco no Vercel
 
 # =============================================================================
 # n8n WEBHOOK
@@ -643,7 +677,7 @@ COMMENTS_TEMPLATE = """
     </div>
 
     {% for comment in comments %}
-    {% set sentiment = comment.sentiment|default('NEUTRO')|lower %}
+    {% set sentiment = comment.sentiment_en|default('neutral') %}
     <div class="comment-card {{ sentiment }}" id="comment-{{ comment.id }}" data-sentiment="{{ sentiment }}">
         <div class="comment-header">
             <div class="comment-avatar">{{ comment.from_name[0] if comment.from_name else '?' }}</div>
@@ -919,17 +953,7 @@ def posts():
     session["current_page_id"] = page_id
 
     try:
-        resp = requests.get(
-            f"{FB_BASE_URL}/me/accounts",
-            params={"access_token": session["access_token"]},
-            timeout=30
-        )
-        accounts = resp.json().get("data", [])
-        page_token = None
-        for acc in accounts:
-            if acc["id"] == page_id:
-                page_token = acc["access_token"]
-                break
+        page_token = get_page_token(page_id)
 
         if not page_token:
             return "Error: Could not get page token", 400
@@ -974,17 +998,7 @@ def comments():
         return redirect("/dashboard")
 
     try:
-        resp = requests.get(
-            f"{FB_BASE_URL}/me/accounts",
-            params={"access_token": session["access_token"]},
-            timeout=30
-        )
-        accounts = resp.json().get("data", [])
-        page_token = None
-        for acc in accounts:
-            if acc["id"] == page_id:
-                page_token = acc["access_token"]
-                break
+        page_token = get_page_token(page_id)
 
         if not page_token:
             return "Error: Could not get page token", 400
@@ -1021,7 +1035,8 @@ def comments():
 
             # Analyze sentiment
             sentiment = get_sentiment(c.get("message", ""), c["id"])
-            sentiment_counts[sentiment.lower()] += 1
+            sentiment_en = SENTIMENT_EN.get(sentiment, "neutral")
+            sentiment_counts[sentiment_en] += 1
 
             comments.append({
                 "id": c["id"],
@@ -1030,8 +1045,9 @@ def comments():
                 "created_time": c.get("created_time", ""),
                 "like_count": c.get("like_count", 0),
                 "fb_url": fb_url,
-                "sentiment": sentiment
-            })    
+                "sentiment": sentiment,
+                "sentiment_en": sentiment_en
+            })
             total_likes += c.get("like_count", 0)
 
         # Calculate percentages
@@ -1141,18 +1157,20 @@ def poll_comments():
     """
     Polling endpoint: Busca comentários, analisa sentimento, envia resumo ao n8n
     Chamar a cada 1 hora (195 chamadas/hora limite)
-    Usa PAGE_ACCESS_TOKEN fixo (não requer login)
     """
-    page_id = request.args.get("page_id")
+    if "access_token" not in session:
+        return jsonify({"error": "Not authenticated"}), 401
+
+    page_id = request.args.get("page_id") or session.get("current_page_id")
     if not page_id:
         return jsonify({"error": "No page selected"}), 400
 
-    # Use PAGE_ACCESS_TOKEN from environment (no login required)
-    page_token = os.environ.get("PAGE_ACCESS_TOKEN")
-    if not page_token:
-        return jsonify({"error": "PAGE_ACCESS_TOKEN not configured"}), 500
-
     try:
+        # Get page token
+        page_token = get_page_token(page_id)
+
+        if not page_token:
+            return jsonify({"error": "Could not get page token"}), 400
 
         # Get posts from last 24h
         since_time = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
