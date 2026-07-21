@@ -9,6 +9,7 @@ import requests
 import hashlib
 import hmac
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, redirect, request, session, render_template_string, url_for, jsonify
 
 app = Flask(__name__)
@@ -1197,16 +1198,16 @@ def poll_comments():
         return jsonify({"error": "No page selected"}), 400
 
     try:
-        hours = int(request.args.get("hours", 24))
+        limit = int(request.args.get("limit", 10))
+        limit = max(1, min(limit, 25))  # entre 1 e 25 posts
     except ValueError:
-        hours = 24
+        limit = 10
 
     try:
-        # Get posts from last N hours
-        since_time = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+        # Busca os últimos N posts da página (independente da data de criação)
         data = fb_get(
             f"{page_id}/posts",
-            {"fields": "id,message,created_time", "since": since_time, "limit": 25},
+            {"fields": "id,message,created_time", "limit": limit},
             page_id=page_id
         )
 
@@ -1216,14 +1217,14 @@ def poll_comments():
         posts = data.get("data", [])
 
         all_comments = []
-        total_new = 0
         posts_detail = []
         cache = load_sentiment_cache()
+        pending = []
 
+        # 1) Coleta todos os comentários de todos os posts
         for post in posts:
             post_id = post["id"]
             post_title = (post.get("message") or "(Post de mídia)")[:80]
-            post_counts = {"POSITIVO": 0, "NEUTRO": 0, "NEGATIVO": 0}
             post_comments = []
 
             # Get comments (max 100 per post)
@@ -1236,44 +1237,55 @@ def poll_comments():
 
             for c in comments:
                 comment_id = c["id"]
-                message = c.get("message", "")
-
-                # Cache de sentimento (evita chamar Gemini de novo no mesmo comentário)
-                if comment_id in cache:
-                    sentiment = cache[comment_id]["sentiment"]
-                else:
-                    sentiment = analyze_sentiment(message)
-                    cache[comment_id] = {
-                        "sentiment": sentiment,
-                        "text": message[:100],
-                        "analyzed_at": datetime.now().isoformat()
-                    }
-                    save_sentiment_cache(cache)
-                    total_new += 1
+                cached = cache.get(comment_id)
 
                 comment_data = {
                     "id": comment_id,
                     "post_id": post_id,
                     "post_titulo": post_title,
                     "author": c.get("from", {}).get("name", "Facebook User"),
-                    "message": message,
-                    "sentiment": sentiment,
+                    "message": c.get("message", ""),
+                    "sentiment": cached["sentiment"] if cached else None,
                     "likes": c.get("like_count", 0),
                     "created_time": c.get("created_time", "")
                 }
+
+                if not cached:
+                    pending.append(comment_data)
+
                 all_comments.append(comment_data)
                 post_comments.append(comment_data)
-                if sentiment in post_counts:
-                    post_counts[sentiment] += 1
 
             posts_detail.append({
                 "post_id": post_id,
                 "titulo": post_title,
                 "created_time": post.get("created_time", ""),
-                "total_comentarios": len(post_comments),
-                "sentimentos": post_counts,
                 "comentarios": post_comments
             })
+
+        # 2) Analisa os comentários novos em PARALELO (até 5 chamadas Gemini simultâneas)
+        total_new = 0
+        if pending:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                new_sentiments = list(executor.map(lambda c: analyze_sentiment(c["message"]), pending))
+            for comment_data, sentiment in zip(pending, new_sentiments):
+                comment_data["sentiment"] = sentiment
+                cache[comment_data["id"]] = {
+                    "sentiment": sentiment,
+                    "text": comment_data["message"][:100],
+                    "analyzed_at": datetime.now().isoformat()
+                }
+            save_sentiment_cache(cache)
+            total_new = len(pending)
+
+        # 3) Contadores por post
+        for p in posts_detail:
+            counts = {"POSITIVO": 0, "NEUTRO": 0, "NEGATIVO": 0}
+            for c in p["comentarios"]:
+                if c["sentiment"] in counts:
+                    counts[c["sentiment"]] += 1
+            p["sentimentos"] = counts
+            p["total_comentarios"] = len(p["comentarios"])
 
         # Calculate summary
         sentiment_counts = {"POSITIVO": 0, "NEUTRO": 0, "NEGATIVO": 0}
@@ -1285,12 +1297,8 @@ def poll_comments():
         summary = {
             "tipo": "resumo_comentarios",
             "pagina": page_id,
-            "periodo": {
-                "inicio": since_time,
-                "fim": datetime.now().isoformat(),
-                "horas": hours
-            },
             "gerado_em": datetime.now().isoformat(),
+            "limite_posts": limit,
             "total_posts": len(posts),
             "total_comentarios": total,
             "novos_analisados": total_new,
