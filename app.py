@@ -37,6 +37,9 @@ GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_M
 # n8n Config
 N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "")
 
+# Chave para o n8n local chamar /poll_comments sem login (configurar no Vercel)
+POLL_API_KEY = os.environ.get("POLL_API_KEY", "")
+
 # Webhook Config
 WEBHOOK_VERIFY_TOKEN = os.environ.get("WEBHOOK_VERIFY_TOKEN", "betelgeuse_webhook_2026")
 WEBHOOK_APP_SECRET = os.environ.get("FB_APP_SECRET", "")
@@ -46,22 +49,55 @@ WEBHOOK_LOG_FILE = "webhook_comments.json"
 # Aceita as duas grafias por segurança; se não existir, cai no fluxo /me/accounts
 PAGE_ACCESS_TOKEN_ENV = os.environ.get("PAGE_ACCESS_TOKEN") or os.environ.get("PAGE_ACESS_TOKEN") or ""
 
-def get_page_token(page_id):
-    """Retorna o Page Access Token.
-    Prioridade: 1) variável de ambiente do Vercel; 2) token obtido via /me/accounts da sessão."""
-    if PAGE_ACCESS_TOKEN_ENV:
-        return PAGE_ACCESS_TOKEN_ENV
-
-    resp = requests.get(
-        f"{FB_BASE_URL}/me/accounts",
-        params={"access_token": session["access_token"]},
-        timeout=30
-    )
-    accounts = resp.json().get("data", [])
-    for acc in accounts:
-        if acc["id"] == page_id:
-            return acc["access_token"]
+def get_session_page_token(page_id):
+    """Busca o Page Token da página via /me/accounts usando o token da sessão."""
+    if "access_token" not in session:
+        return None
+    try:
+        resp = requests.get(
+            f"{FB_BASE_URL}/me/accounts",
+            params={"access_token": session["access_token"]},
+            timeout=30
+        )
+        for acc in resp.json().get("data", []):
+            if acc.get("id") == page_id:
+                return acc.get("access_token")
+    except Exception as e:
+        print(f"Erro ao buscar page token da sessão: {e}")
     return None
+
+def fb_get(url_path, params, page_id=None):
+    """GET na Graph API com fallback automático de token.
+    Ordem: 1) PAGE_ACCESS_TOKEN do ambiente Vercel;
+           2) Page Token via /me/accounts (sessão);
+           3) User Token da sessão.
+    Retorna o primeiro JSON sem 'error'; se todos falharem, retorna o último erro."""
+    tokens = []
+    if PAGE_ACCESS_TOKEN_ENV:
+        tokens.append(PAGE_ACCESS_TOKEN_ENV)
+    if page_id:
+        session_page_token = get_session_page_token(page_id)
+        if session_page_token and session_page_token not in tokens:
+            tokens.append(session_page_token)
+    if "access_token" in session and session["access_token"] not in tokens:
+        tokens.append(session["access_token"])
+
+    last_data = {}
+    for token in tokens:
+        try:
+            resp = requests.get(
+                f"{FB_BASE_URL}/{url_path}",
+                params={**params, "access_token": token},
+                timeout=30
+            )
+            data = resp.json()
+            if "error" not in data:
+                return data
+            print(f"Graph API recusou token (...{token[-6:]}): {data['error']}")
+            last_data = data
+        except Exception as e:
+            print(f"Erro na chamada Graph API: {e}")
+    return last_data
 
 # =============================================================================
 # SENTIMENT ANALYSIS (Gemini) - NO CACHE (Vercel read-only filesystem)
@@ -953,20 +989,16 @@ def posts():
     session["current_page_id"] = page_id
 
     try:
-        page_token = get_page_token(page_id)
-
-        if not page_token:
-            return "Error: Could not get page token", 400
-
-        resp = requests.get(
-            f"{FB_BASE_URL}/{page_id}/posts",
-            params={
-                "access_token": page_token,
-                "fields": "id,message,created_time,picture,comments.summary(true)"
-            },
-            timeout=30
+        data = fb_get(
+            f"{page_id}/posts",
+            {"fields": "id,message,created_time,picture,comments.summary(true)"},
+            page_id=page_id
         )
-        posts_data = resp.json().get("data", [])
+
+        if "error" in data:
+            return f"Error from Facebook: {data['error']}", 400
+
+        posts_data = data.get("data", [])
 
         posts = []
         for post in posts_data:
@@ -998,21 +1030,16 @@ def comments():
         return redirect("/dashboard")
 
     try:
-        page_token = get_page_token(page_id)
-
-        if not page_token:
-            return "Error: Could not get page token", 400
-
-        resp = requests.get(
-            f"{FB_BASE_URL}/{post_id}/comments",
-            params={
-                "access_token": page_token,
-                "fields": "id,from,message,created_time,like_count,permalink_url",
-                "filter": "stream"
-            },
-            timeout=30
+        data = fb_get(
+            f"{post_id}/comments",
+            {"fields": "id,from,message,created_time,like_count,permalink_url", "filter": "stream"},
+            page_id=page_id
         )
-        comments_data = resp.json().get("data", [])
+
+        if "error" in data:
+            return f"Error from Facebook: {data['error']}", 400
+
+        comments_data = data.get("data", [])
 
         comments = []
         total_likes = 0
@@ -1155,62 +1182,63 @@ def webhook_logs():
 @app.route("/poll_comments")
 def poll_comments():
     """
-    Polling endpoint: Busca comentários, analisa sentimento, envia resumo ao n8n
-    Chamar a cada 1 hora (195 chamadas/hora limite)
+    Endpoint de polling para o n8n (local) consultar o Vercel.
+    Autenticação: ?key=POLL_API_KEY  ou  sessão logada no navegador.
+    Retorna: todos os posts do período + comentários + sentimentos (detalhado por post).
     """
-    if "access_token" not in session:
-        return jsonify({"error": "Not authenticated"}), 401
+    key = request.args.get("key", "")
+    if POLL_API_KEY and key == POLL_API_KEY:
+        pass  # acesso autorizado via n8n
+    elif "access_token" not in session:
+        return jsonify({"error": "Not authenticated. Use ?key=POLL_API_KEY ou faça login."}), 401
 
     page_id = request.args.get("page_id") or session.get("current_page_id")
     if not page_id:
         return jsonify({"error": "No page selected"}), 400
 
     try:
-        # Get page token
-        page_token = get_page_token(page_id)
+        hours = int(request.args.get("hours", 24))
+    except ValueError:
+        hours = 24
 
-        if not page_token:
-            return jsonify({"error": "Could not get page token"}), 400
-
-        # Get posts from last 24h
-        since_time = (datetime.now() - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%S")
-        resp = requests.get(
-            f"{FB_BASE_URL}/{page_id}/posts",
-            params={
-                "access_token": page_token,
-                "fields": "id,message,created_time",
-                "since": since_time,
-                "limit": 10
-            },
-            timeout=30
+    try:
+        # Get posts from last N hours
+        since_time = (datetime.now() - timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%S")
+        data = fb_get(
+            f"{page_id}/posts",
+            {"fields": "id,message,created_time", "since": since_time, "limit": 25},
+            page_id=page_id
         )
-        posts = resp.json().get("data", [])
+
+        if "error" in data:
+            return jsonify({"error": data["error"]}), 400
+
+        posts = data.get("data", [])
 
         all_comments = []
         total_new = 0
+        posts_detail = []
+        cache = load_sentiment_cache()
 
         for post in posts:
             post_id = post["id"]
+            post_title = (post.get("message") or "(Post de mídia)")[:80]
+            post_counts = {"POSITIVO": 0, "NEUTRO": 0, "NEGATIVO": 0}
+            post_comments = []
 
             # Get comments (max 100 per post)
-            resp = requests.get(
-                f"{FB_BASE_URL}/{post_id}/comments",
-                params={
-                    "access_token": page_token,
-                    "fields": "id,from,message,created_time,like_count",
-                    "limit": 100,
-                    "order": "reverse_chronological"
-                },
-                timeout=30
+            data = fb_get(
+                f"{post_id}/comments",
+                {"fields": "id,from,message,created_time,like_count", "limit": 100, "order": "reverse_chronological"},
+                page_id=page_id
             )
-            comments = resp.json().get("data", [])
+            comments = data.get("data", [])
 
             for c in comments:
                 comment_id = c["id"]
                 message = c.get("message", "")
 
-                # Check if already analyzed
-                cache = load_sentiment_cache()
+                # Cache de sentimento (evita chamar Gemini de novo no mesmo comentário)
                 if comment_id in cache:
                     sentiment = cache[comment_id]["sentiment"]
                 else:
@@ -1223,20 +1251,35 @@ def poll_comments():
                     save_sentiment_cache(cache)
                     total_new += 1
 
-                all_comments.append({
+                comment_data = {
                     "id": comment_id,
                     "post_id": post_id,
+                    "post_titulo": post_title,
                     "author": c.get("from", {}).get("name", "Facebook User"),
                     "message": message,
                     "sentiment": sentiment,
                     "likes": c.get("like_count", 0),
                     "created_time": c.get("created_time", "")
-                })
+                }
+                all_comments.append(comment_data)
+                post_comments.append(comment_data)
+                if sentiment in post_counts:
+                    post_counts[sentiment] += 1
+
+            posts_detail.append({
+                "post_id": post_id,
+                "titulo": post_title,
+                "created_time": post.get("created_time", ""),
+                "total_comentarios": len(post_comments),
+                "sentimentos": post_counts,
+                "comentarios": post_comments
+            })
 
         # Calculate summary
         sentiment_counts = {"POSITIVO": 0, "NEUTRO": 0, "NEGATIVO": 0}
         for c in all_comments:
-            sentiment_counts[c["sentiment"]] += 1
+            if c["sentiment"] in sentiment_counts:
+                sentiment_counts[c["sentiment"]] += 1
 
         total = len(all_comments)
         summary = {
@@ -1244,8 +1287,11 @@ def poll_comments():
             "pagina": page_id,
             "periodo": {
                 "inicio": since_time,
-                "fim": datetime.now().isoformat()
+                "fim": datetime.now().isoformat(),
+                "horas": hours
             },
+            "gerado_em": datetime.now().isoformat(),
+            "total_posts": len(posts),
             "total_comentarios": total,
             "novos_analisados": total_new,
             "sentimentos": sentiment_counts,
@@ -1254,12 +1300,13 @@ def poll_comments():
                 "neutro": round(sentiment_counts["NEUTRO"] / total * 100, 1) if total > 0 else 0,
                 "negativo": round(sentiment_counts["NEGATIVO"] / total * 100, 1) if total > 0 else 0
             },
+            "posts": posts_detail,
+            "comentarios": all_comments,
             "alertas": [c for c in all_comments if c["sentiment"] == "NEGATIVO"][:5],
-            "top_positivos": [c for c in all_comments if c["sentiment"] == "POSITIVO"][:3],
-            "resumo_executivo": f"{total} comentários analisados. {sentiment_counts['POSITIVO']} positivos, {sentiment_counts['NEGATIVO']} negativos."
+            "resumo_executivo": f"{total} comentários em {len(posts)} posts. {sentiment_counts['POSITIVO']} positivos, {sentiment_counts['NEUTRO']} neutros, {sentiment_counts['NEGATIVO']} negativos."
         }
 
-        # Send to n8n if there are new comments
+        # Opcional: push direto ao n8n (só funciona se o n8n estiver acessível publicamente)
         if total_new > 0 and N8N_WEBHOOK_URL:
             send_to_n8n(summary)
 
