@@ -105,7 +105,9 @@ def fb_get(url_path, params, page_id=None):
 
 def fb_get_paginated(url_path, params, page_id=None, max_items=200):
     """GET paginado: segue paging.next até atingir max_items.
-    Usa o primeiro token que funcionar (mesma ordem do fb_get)."""
+    Usa o primeiro token que funcionar (mesma ordem do fb_get).
+    Retorna (items, erro) — erro é None em caso de sucesso."""
+    last_err = None
     for token in _fb_tokens(page_id):
         items = []
         url = f"{FB_BASE_URL}/{url_path}"
@@ -115,21 +117,23 @@ def fb_get_paginated(url_path, params, page_id=None, max_items=200):
                 resp = requests.get(url, params=next_params, timeout=30)
                 data = resp.json()
                 if "error" in data:
+                    last_err = data["error"].get("message", str(data["error"]))
                     print(f"Paginação recusada (...{token[-6:]}): {data['error']}")
                     break
                 batch = data.get("data", [])
                 if not batch:
-                    return items
+                    return items, None
                 items.extend(batch)
                 next_url = data.get("paging", {}).get("next")
                 if not next_url:
-                    return items
+                    return items, None
                 url = next_url
                 next_params = {}  # paging.next já traz token e cursores
-            return items[:max_items]
+            return items[:max_items], None
         except Exception as e:
+            last_err = str(e)
             print(f"Erro na paginação: {e}")
-    return []
+    return [], last_err
 
 
 
@@ -726,6 +730,12 @@ COMMENTS_TEMPLATE = """
         <a href="/comments?post_id={{ post_id }}&page_id={{ page_id }}&max=500" style="color:#1877f2;">500</a>
     </p>
 
+    {% if fb_error and comments|length == 0 %}
+    <div class="alert" style="background: #ffebee; color: #c62828; border: 1px solid #ef9a9a;">
+        ⚠️ <strong>A Graph API não retornou comentários.</strong> Detalhe técnico: {{ fb_error }}
+    </div>
+    {% endif %}
+
     <div class="stats-grid">
         <div class="stat-box positive">
             <div class="stat-value positive">{{ sentiment_counts.positive|default(0) }}</div>
@@ -1080,11 +1090,12 @@ def comments():
         except ValueError:
             max_items = 200
 
-        # Paginação real: busca até max_items comentários (mais recentes primeiro)
-        comments_data = fb_get_paginated(
+        # Paginação real: busca até max_items comentários
+        # (filter=stream = combinação comprovada em produção com o page token)
+        comments_data, fb_error = fb_get_paginated(
             f"{post_id}/comments",
             {"fields": "id,from,message,created_time,like_count,permalink_url",
-             "order": "reverse_chronological", "limit": 100},
+             "filter": "stream", "limit": 100},
             page_id=page_id,
             max_items=max_items
         )
@@ -1161,6 +1172,7 @@ def comments():
                 post_id=post_id,
                 truncated=truncated,
                 max_items=max_items,
+                fb_error=fb_error,
                 total_likes=total_likes,
                 sentiment_counts=sentiment_counts,
                 sentiment_pct=sentiment_pct
