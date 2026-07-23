@@ -20,7 +20,7 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-key-change-in-prod")
 # =============================================================================
 FB_APP_ID = os.environ.get("FB_APP_ID", "YOUR_APP_ID")
 FB_APP_SECRET = os.environ.get("FB_APP_SECRET", "YOUR_APP_SECRET")
-FB_API_VERSION = "v19.0"
+FB_API_VERSION = "v25.0"
 FB_BASE_URL = f"https://graph.facebook.com/{FB_API_VERSION}"
 REDIRECT_URI = os.environ.get("REDIRECT_URI", "https://betelgeuse-ti.vercel.app/callback")
 
@@ -32,7 +32,7 @@ REQUIRED_SCOPES = [
 
 # Gemini Config
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-GEMINI_MODEL = "gemini-3.5-flash"
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # n8n Config
@@ -67,12 +67,11 @@ def get_session_page_token(page_id):
         print(f"Erro ao buscar page token da sessão: {e}")
     return None
 
-def fb_get(url_path, params, page_id=None):
-    """GET na Graph API com fallback automático de token.
-    Ordem: 1) PAGE_ACCESS_TOKEN do ambiente Vercel;
-           2) Page Token via /me/accounts (sessão);
-           3) User Token da sessão.
-    Retorna o primeiro JSON sem 'error'; se todos falharem, retorna o último erro."""
+def _fb_tokens(page_id=None):
+    """Monta a lista de tokens na ordem de prioridade:
+    1) PAGE_ACCESS_TOKEN do ambiente Vercel;
+    2) Page Token via /me/accounts (sessão);
+    3) User Token da sessão."""
     tokens = []
     if PAGE_ACCESS_TOKEN_ENV:
         tokens.append(PAGE_ACCESS_TOKEN_ENV)
@@ -82,9 +81,13 @@ def fb_get(url_path, params, page_id=None):
             tokens.append(session_page_token)
     if "access_token" in session and session["access_token"] not in tokens:
         tokens.append(session["access_token"])
+    return tokens
 
+def fb_get(url_path, params, page_id=None):
+    """GET na Graph API com fallback automático de token.
+    Retorna o primeiro JSON sem 'error'; se todos falharem, retorna o último erro."""
     last_data = {}
-    for token in tokens:
+    for token in _fb_tokens(page_id):
         try:
             resp = requests.get(
                 f"{FB_BASE_URL}/{url_path}",
@@ -99,6 +102,36 @@ def fb_get(url_path, params, page_id=None):
         except Exception as e:
             print(f"Erro na chamada Graph API: {e}")
     return last_data
+
+def fb_get_paginated(url_path, params, page_id=None, max_items=200):
+    """GET paginado: segue paging.next até atingir max_items.
+    Usa o primeiro token que funcionar (mesma ordem do fb_get)."""
+    for token in _fb_tokens(page_id):
+        items = []
+        url = f"{FB_BASE_URL}/{url_path}"
+        next_params = {**params, "access_token": token}
+        try:
+            while len(items) < max_items:
+                resp = requests.get(url, params=next_params, timeout=30)
+                data = resp.json()
+                if "error" in data:
+                    print(f"Paginação recusada (...{token[-6:]}): {data['error']}")
+                    break
+                batch = data.get("data", [])
+                if not batch:
+                    return items
+                items.extend(batch)
+                next_url = data.get("paging", {}).get("next")
+                if not next_url:
+                    return items
+                url = next_url
+                next_params = {}  # paging.next já traz token e cursores
+            return items[:max_items]
+        except Exception as e:
+            print(f"Erro na paginação: {e}")
+    return []
+
+
 
 # =============================================================================
 # SENTIMENT ANALYSIS (Gemini) - NO CACHE (Vercel read-only filesystem)
@@ -370,6 +403,8 @@ BASE_TEMPLATE = """
             gap: 8px;
             margin-top: 10px;
         }
+        .hidden-comment { opacity: 0.55; filter: grayscale(0.6); }
+        .hidden-label { font-size: 12px; color: #c62828; font-weight: 700; }
 
         .sentiment-badge {
             display: inline-block;
@@ -683,6 +718,14 @@ COMMENTS_TEMPLATE = """
     <div class="card-title">💬 Moderar Comentários com Análise de Sentimento</div>
     <p class="card-desc">Revise comentários em tempo real. Classificação automática: Positivo, Neutro, Negativo.</p>
 
+    <p style="font-size: 13px; color: #65676b; margin-bottom: 16px;">
+        💬 Exibindo os <strong>{{ comments|length }}</strong> comentários mais recentes
+        {% if truncated %}— este post tem mais; ajuste o limite:{% else %}— ajustar limite:{% endif %}
+        <a href="/comments?post_id={{ post_id }}&page_id={{ page_id }}&max=100" style="color:#1877f2;">100</a> ·
+        <a href="/comments?post_id={{ post_id }}&page_id={{ page_id }}&max=200" style="color:#1877f2;">200</a> ·
+        <a href="/comments?post_id={{ post_id }}&page_id={{ page_id }}&max=500" style="color:#1877f2;">500</a>
+    </p>
+
     <div class="stats-grid">
         <div class="stat-box positive">
             <div class="stat-value positive">{{ sentiment_counts.positive|default(0) }}</div>
@@ -992,7 +1035,7 @@ def posts():
     try:
         data = fb_get(
             f"{page_id}/posts",
-            {"fields": "id,message,created_time,picture,comments.summary(true)"},
+            {"fields": "id,message,created_time,full_picture,comments.summary(true)", "limit": 25},
             page_id=page_id
         )
 
@@ -1007,7 +1050,7 @@ def posts():
                 "id": post["id"],
                 "message": post.get("message", "(Media Post)"),
                 "created_time": post.get("created_time", ""),
-                "picture": post.get("picture", ""),
+                "picture": post.get("full_picture") or post.get("picture", ""),
                 "comments_count": post.get("comments", {}).get("summary", {}).get("total_count", 0)
             })
 
@@ -1031,16 +1074,39 @@ def comments():
         return redirect("/dashboard")
 
     try:
-        data = fb_get(
+        try:
+            max_items = int(request.args.get("max", 200))
+            max_items = max(25, min(max_items, 500))
+        except ValueError:
+            max_items = 200
+
+        # Paginação real: busca até max_items comentários (mais recentes primeiro)
+        comments_data = fb_get_paginated(
             f"{post_id}/comments",
-            {"fields": "id,from,message,created_time,like_count,permalink_url", "filter": "stream"},
-            page_id=page_id
+            {"fields": "id,from,message,created_time,like_count,permalink_url",
+             "order": "reverse_chronological", "limit": 100},
+            page_id=page_id,
+            max_items=max_items
         )
+        truncated = len(comments_data) >= max_items
 
-        if "error" in data:
-            return f"Error from Facebook: {data['error']}", 400
-
-        comments_data = data.get("data", [])
+        # Sentimento em PRÉ-PASSE paralelo (5 threads) com cache em memória
+        cache = load_sentiment_cache()
+        sentiments = {}
+        pending = []
+        for c in comments_data:
+            cached = cache.get(c["id"])
+            if cached:
+                sentiments[c["id"]] = cached["sentiment"]
+            else:
+                pending.append(c)
+        if pending:
+            with ThreadPoolExecutor(max_workers=5) as executor:
+                results = list(executor.map(lambda c: analyze_sentiment(c.get("message", "")), pending))
+            for c, s in zip(pending, results):
+                sentiments[c["id"]] = s
+                cache[c["id"]] = {"sentiment": s, "text": c.get("message", "")[:100],
+                                  "analyzed_at": datetime.now().isoformat()}
 
         comments = []
         total_likes = 0
@@ -1061,8 +1127,8 @@ def comments():
             if isinstance(fb_url, str):
                 fb_url = fb_url.replace("https://www.facebook.com/https://www.facebook.com/", "https://www.facebook.com/")
 
-            # Analyze sentiment
-            sentiment = get_sentiment(c.get("message", ""), c["id"])
+            # Sentimento já calculado no pré-passe paralelo
+            sentiment = sentiments.get(c["id"], "NEUTRO")
             sentiment_en = SENTIMENT_EN.get(sentiment, "neutral")
             sentiment_counts[sentiment_en] += 1
 
@@ -1092,6 +1158,9 @@ def comments():
                 COMMENTS_TEMPLATE,
                 comments=comments,
                 page_id=page_id,
+                post_id=post_id,
+                truncated=truncated,
+                max_items=max_items,
                 total_likes=total_likes,
                 sentiment_counts=sentiment_counts,
                 sentiment_pct=sentiment_pct
