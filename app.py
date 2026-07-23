@@ -1284,6 +1284,22 @@ def poll_comments():
     except ValueError:
         limit = 10
 
+    # --- Controle de carga (evita timeout no Vercel) ---
+    # comments_limit = comentários por post (padrão 100; use 25 para chamadas rápidas)
+    try:
+        comments_limit = int(request.args.get("comments_limit", 100))
+        comments_limit = max(1, min(comments_limit, 100))
+    except ValueError:
+        comments_limit = 100
+    # analyze=0 → pula o Gemini inteiro (resposta em segundos; sentiment vem None)
+    analyze = request.args.get("analyze", "1") != "0"
+    # max_analyze = teto de análises novas por chamada (o resto fica para a próxima)
+    try:
+        max_analyze = int(request.args.get("max_analyze", 120))
+        max_analyze = max(0, min(max_analyze, 300))
+    except ValueError:
+        max_analyze = 120
+
     try:
         # Busca os últimos N posts da página (independente da data de criação)
         data = fb_get(
@@ -1308,10 +1324,10 @@ def poll_comments():
             post_title = (post.get("message") or "(Post de mídia)")[:80]
             post_comments = []
 
-            # Get comments (max 100 per post)
+            # Get comments (limite por post via parâmetro)
             data = fb_get(
                 f"{post_id}/comments",
-                {"fields": "id,from,message,created_time,like_count", "limit": 100, "order": "reverse_chronological"},
+                {"fields": "id,from,message,created_time,like_count", "limit": comments_limit, "order": "reverse_chronological"},
                 page_id=page_id
             )
             comments = data.get("data", [])
@@ -1345,11 +1361,15 @@ def poll_comments():
             })
 
         # 2) Analisa os comentários novos em PARALELO (até 5 chamadas Gemini simultâneas)
+        #    Respeitando analyze=0 (modo rápido) e o teto max_analyze (anti-timeout)
         total_new = 0
-        if pending:
+        if pending and analyze:
+            to_analyze = pending[:max_analyze]
+            for c in pending[max_analyze:]:
+                c["sentiment"] = None  # fica para a próxima chamada
             with ThreadPoolExecutor(max_workers=5) as executor:
-                new_sentiments = list(executor.map(lambda c: analyze_sentiment(c["message"]), pending))
-            for comment_data, sentiment in zip(pending, new_sentiments):
+                new_sentiments = list(executor.map(lambda c: analyze_sentiment(c["message"]), to_analyze))
+            for comment_data, sentiment in zip(to_analyze, new_sentiments):
                 comment_data["sentiment"] = sentiment
                 cache[comment_data["id"]] = {
                     "sentiment": sentiment,
@@ -1357,7 +1377,7 @@ def poll_comments():
                     "analyzed_at": datetime.now().isoformat()
                 }
             save_sentiment_cache(cache)
-            total_new = len(pending)
+            total_new = len(to_analyze)
 
         # 3) Contadores por post
         for p in posts_detail:
@@ -1375,6 +1395,7 @@ def poll_comments():
                 sentiment_counts[c["sentiment"]] += 1
 
         total = len(all_comments)
+        total_analisados = sum(sentiment_counts.values())
         summary = {
             "tipo": "resumo_comentarios",
             "pagina": page_id,
@@ -1382,17 +1403,18 @@ def poll_comments():
             "limite_posts": limit,
             "total_posts": len(posts),
             "total_comentarios": total,
+            "total_analisados": total_analisados,
             "novos_analisados": total_new,
             "sentimentos": sentiment_counts,
             "percentuais": {
-                "positivo": round(sentiment_counts["POSITIVO"] / total * 100, 1) if total > 0 else 0,
-                "neutro": round(sentiment_counts["NEUTRO"] / total * 100, 1) if total > 0 else 0,
-                "negativo": round(sentiment_counts["NEGATIVO"] / total * 100, 1) if total > 0 else 0
+                "positivo": round(sentiment_counts["POSITIVO"] / total_analisados * 100, 1) if total_analisados > 0 else 0,
+                "neutro": round(sentiment_counts["NEUTRO"] / total_analisados * 100, 1) if total_analisados > 0 else 0,
+                "negativo": round(sentiment_counts["NEGATIVO"] / total_analisados * 100, 1) if total_analisados > 0 else 0
             },
             "posts": posts_detail,
             "comentarios": all_comments,
             "alertas": [c for c in all_comments if c["sentiment"] == "NEGATIVO"][:5],
-            "resumo_executivo": f"{total} comentários em {len(posts)} posts. {sentiment_counts['POSITIVO']} positivos, {sentiment_counts['NEUTRO']} neutros, {sentiment_counts['NEGATIVO']} negativos."
+            "resumo_executivo": f"{total} comentários em {len(posts)} posts ({total_analisados} analisados). {sentiment_counts['POSITIVO']} positivos, {sentiment_counts['NEUTRO']} neutros, {sentiment_counts['NEGATIVO']} negativos."
         }
 
         # Opcional: push direto ao n8n (só funciona se o n8n estiver acessível publicamente)
