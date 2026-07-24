@@ -1266,6 +1266,29 @@ def logout():
     session.clear()
     return redirect("/")
 
+@app.route("/test_gemini")
+def test_gemini():
+    """Diagnóstico temporário: faz 1 chamada ao Gemini e mostra a resposta CRUA.
+    Uso: /test_gemini?key=SUA_POLL_API_KEY"""
+    if request.args.get("key") != POLL_API_KEY:
+        return jsonify({"erro": "Não autorizado"}), 401
+    if not GOOGLE_API_KEY:
+        return jsonify({"ok": False, "erro": "GOOGLE_API_KEY está VAZIA nas envs do Vercel"})
+    try:
+        url = f"{GEMINI_URL}?key={GOOGLE_API_KEY}"
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": "Responda uma palavra: POSITIVO, NEUTRO ou NEGATIVO. Comentario: Muito top"}]}],
+            "generationConfig": {"temperature": 0}
+        }
+        resp = requests.post(url, json=payload, timeout=30)
+        return jsonify({
+            "modelo_usado": GEMINI_MODEL,
+            "http_status": resp.status_code,
+            "resposta_crua": resp.json()
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "erro": str(e)})
+
 # =============================================================================
 # LEGAL PAGES
 # =============================================================================
