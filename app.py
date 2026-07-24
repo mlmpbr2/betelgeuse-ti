@@ -27,8 +27,9 @@ REDIRECT_URI = os.environ.get("REDIRECT_URI", "https://betelgeuse-ti.vercel.app/
 
 REQUIRED_SCOPES = [
     "pages_show_list",
-    "pages_read_engagement", 
-    "pages_read_user_content"
+    "pages_read_engagement",
+    "pages_read_user_content",
+    "pages_manage_metadata"  # webhooks de página (App Review; admin concede antes da aprovação)
 ]
 
 # Gemini Config
@@ -182,6 +183,26 @@ def analyze_sentiment(text):
     except Exception as e:
         print(f"Erro Gemini: {e}")
         return "NEUTRO"
+
+def fb_post(url_path, params, page_id=None):
+    """POST na Graph API com fallback de token (ex.: inscrever página nos webhooks).
+    Retorna (True, None) no sucesso ou (False, mensagem_erro)."""
+    last_err = "Nenhum token disponível"
+    for token in _fb_tokens(page_id):
+        try:
+            resp = requests.post(
+                f"{FB_BASE_URL}/{url_path}",
+                params={**params, "access_token": token},
+                timeout=30
+            )
+            data = resp.json()
+            if "error" not in data:
+                return True, None
+            print(f"POST recusado (...{token[-6:]}): {data['error']}")
+            last_err = data["error"].get("message", str(data["error"]))
+        except Exception as e:
+            last_err = str(e)
+    return False, last_err
 
 def get_sentiment(text, comment_id):
     """Get sentiment - no cache, direct analysis every time"""
@@ -337,6 +358,7 @@ BASE_TEMPLATE = """
         .permission-badge.red { background: #ffebee; color: #c62828; border-color: #ef9a9a; }
         .permission-badge.green { background: #e8f5e9; color: #2e7d32; border-color: #a5d6a7; }
         .permission-badge.orange { background: #fff3e0; color: #ef6c00; border-color: #ffcc80; }
+        .permission-badge.purple { background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
 
         .card {
             background: white;
@@ -754,6 +776,23 @@ POSTS_TEMPLATE = """
     </div>
 </div>
 
+{% if webhook_status %}
+<div class="alert {{ 'alert-success' if webhook_status == 'ativo' else 'alert-info' }}">
+    {% if webhook_status == 'ativo' %}
+    ✅ <strong>Webhooks ativos nesta página!</strong> Novos comentários chegarão em tempo real.
+    {% else %}
+    ⚠️ <strong>Falha ao ativar webhooks:</strong> {{ webhook_status }}
+    {% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+    <span class="permission-badge purple">pages_manage_metadata</span>
+    <div class="card-title">🔔 Notificações em Tempo Real (Webhooks)</div>
+    <p class="card-desc">Assine os eventos desta página para receber novos comentários em tempo real, sem polling.</p>
+    <a href="/subscribe_webhook?page_id={{ page_id }}" class="btn btn-primary">🔔 Ativar Webhooks nesta Página</a>
+</div>
+
 <div class="card">
     <span class="permission-badge orange">pages_read_engagement</span>
     <div class="card-title">📝 Escolha um Post</div>
@@ -1147,7 +1186,12 @@ def posts():
 
         return render_template_string(
             BASE_TEMPLATE,
-            content=render_template_string(POSTS_TEMPLATE, posts=posts, page_id=page_id)
+            content=render_template_string(
+                POSTS_TEMPLATE,
+                posts=posts,
+                page_id=page_id,
+                webhook_status=request.args.get("webhook", "")
+            )
         )
 
     except Exception as e:
@@ -1313,6 +1357,31 @@ def data_use():
 # =============================================================================
 # WEBHOOK ROUTES
 # =============================================================================
+
+@app.route("/subscribe_webhook")
+def subscribe_webhook():
+    """Inscreve a página selecionada nos webhooks do app (campo 'feed').
+    Usa pages_manage_metadata — é a ação demonstrada no screencast do App Review."""
+    if "access_token" not in session and not PAGE_ACCESS_TOKEN_ENV:
+        return redirect("/")
+
+    page_id = request.args.get("page_id") or session.get("current_page_id")
+    if not page_id:
+        return redirect("/dashboard")
+
+    # 1) Já está inscrita?
+    status = fb_get(f"{page_id}/subscribed_apps", {}, page_id=page_id)
+    for app_entry in status.get("data", []):
+        if str(app_entry.get("id")) == str(FB_APP_ID):
+            print(f"Página {page_id} já estava inscrita nos webhooks.")
+            return redirect(f"/posts?page_id={page_id}&webhook=ativo")
+
+    # 2) Inscreve no campo 'feed' (posts, comentários, reações)
+    ok, err = fb_post(f"{page_id}/subscribed_apps", {"subscribed_fields": "feed"}, page_id=page_id)
+    if ok:
+        print(f"Página {page_id} inscrita nos webhooks (feed) com sucesso!")
+        return redirect(f"/posts?page_id={page_id}&webhook=ativo")
+    return redirect(f"/posts?page_id={page_id}&webhook=erro:{err}")
 
 @app.route("/webhook", methods=["GET"])
 def webhook_verify():
