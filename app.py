@@ -4,6 +4,7 @@ Flask app with Meta App Review compliance + real-time sentiment KPIs
 """
 
 import os
+import re
 import json
 import requests
 import hashlib
@@ -32,7 +33,10 @@ REQUIRED_SCOPES = [
 
 # Gemini Config
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.5-flash")
+# Modelo otimizado para custo: flash-lite é ~15x mais barato que o 3.5-flash
+# e tem thinking DESLIGADO por padrão (thinking = tokens de output cobrados!)
+# Para trocar de modelo sem deploy: defina GEMINI_MODEL nas envs do Vercel
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # n8n Config
@@ -152,7 +156,11 @@ def analyze_sentiment(text):
             "contents": [{
                 "role": "user",
                 "parts": [{"text": f"Classifique o sentimento deste comentario em UMA palavra apenas: POSITIVO, NEUTRO ou NEGATIVO. Comentario: {text}"}]
-            }]
+            }],
+            "generationConfig": {
+                "temperature": 0,
+                "thinkingConfig": {"thinkingBudget": 0}  # thinking = tokens de output cobrados; aqui é zero
+            }
         }
 
         resp = requests.post(url, json=payload, timeout=30)
@@ -178,6 +186,78 @@ def analyze_sentiment(text):
 def get_sentiment(text, comment_id):
     """Get sentiment - no cache, direct analysis every time"""
     return analyze_sentiment(text)
+
+# =============================================================================
+# ANÁLISE EM LOTE (anti-custo): 20 comentários por chamada Gemini
+# Antes: 1 chamada por comentário (500 comentários = 500 chamadas)
+# Agora: 500 comentários = 25 chamadas → ~95% menos requisições e tokens
+# =============================================================================
+BATCH_SIZE = 20
+
+def analyze_sentiments_batch(texts):
+    """Analisa até BATCH_SIZE textos em UMA chamada Gemini.
+    Retorna lista de sentimentos na MESMA ORDEM dos textos."""
+    if not texts:
+        return []
+    if not GOOGLE_API_KEY:
+        return ["NEUTRO"] * len(texts)
+    try:
+        numbered = "\n".join(
+            f"{i+1}. {t[:280].replace(chr(10), ' ')}" for i, t in enumerate(texts)
+        )
+        prompt = (
+            "Classifique o sentimento de cada comentário em UMA palavra: POSITIVO, NEUTRO ou NEGATIVO.\n"
+            "Responda APENAS um JSON array de strings, na MESMA ORDEM dos comentários, sem explicações.\n"
+            'Exemplo de resposta: ["POSITIVO","NEUTRO","NEGATIVO"]\n\n'
+            f"Comentários:\n{numbered}"
+        )
+        url = f"{GEMINI_URL}?key={GOOGLE_API_KEY}"
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0,
+                "thinkingConfig": {"thinkingBudget": 0}
+            }
+        }
+        resp = requests.post(url, json=payload, timeout=60)
+        data = resp.json()
+        result_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+        # Extrai o array JSON mesmo se o modelo embrulhar em ```json
+        match = re.search(r"\[.*\]", result_text, re.DOTALL)
+        if match:
+            arr = json.loads(match.group(0))
+            sentiments = []
+            for item in arr[:len(texts)]:
+                s = str(item).upper().strip()
+                if "POSITIVO" in s:
+                    sentiments.append("POSITIVO")
+                elif "NEGATIVO" in s:
+                    sentiments.append("NEGATIVO")
+                else:
+                    sentiments.append("NEUTRO")
+            # Se o modelo retornou menos itens, completa com NEUTRO
+            while len(sentiments) < len(texts):
+                sentiments.append("NEUTRO")
+            return sentiments
+
+        print(f"Batch Gemini: resposta sem JSON array: {result_text[:120]}")
+        return ["NEUTRO"] * len(texts)
+
+    except Exception as e:
+        print(f"Erro Gemini batch: {e}")
+        return ["NEUTRO"] * len(texts)
+
+def analyze_many(texts):
+    """Divide a lista em lotes de BATCH_SIZE e processa os lotes em paralelo."""
+    if not texts:
+        return []
+    batches = [texts[i:i + BATCH_SIZE] for i in range(0, len(texts), BATCH_SIZE)]
+    results = []
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        for batch_result in executor.map(analyze_sentiments_batch, batches):
+            results.extend(batch_result)
+    return results
 
 # Mapa PT -> EN: o Gemini responde em português (POSITIVO/NEUTRO/NEGATIVO),
 # mas os contadores e as classes CSS do template usam inglês (positive/neutral/negative)
@@ -1112,8 +1192,7 @@ def comments():
             else:
                 pending.append(c)
         if pending:
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                results = list(executor.map(lambda c: analyze_sentiment(c.get("message", "")), pending))
+            results = analyze_many([c.get("message", "") for c in pending])
             for c, s in zip(pending, results):
                 sentiments[c["id"]] = s
                 cache[c["id"]] = {"sentiment": s, "text": c.get("message", "")[:100],
@@ -1367,8 +1446,7 @@ def poll_comments():
             to_analyze = pending[:max_analyze]
             for c in pending[max_analyze:]:
                 c["sentiment"] = None  # fica para a próxima chamada
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                new_sentiments = list(executor.map(lambda c: analyze_sentiment(c["message"]), to_analyze))
+            new_sentiments = analyze_many([c["message"] for c in to_analyze])
             for comment_data, sentiment in zip(to_analyze, new_sentiments):
                 comment_data["sentiment"] = sentiment
                 cache[comment_data["id"]] = {
