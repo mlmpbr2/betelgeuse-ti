@@ -33,10 +33,11 @@ REQUIRED_SCOPES = [
 
 # Gemini Config
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-# Modelo otimizado para custo: flash-lite é ~15x mais barato que o 3.5-flash
-# e tem thinking DESLIGADO por padrão (thinking = tokens de output cobrados!)
+# Modelo otimizado para custo: 3.1-flash-lite é o tier econômico da geração atual
+# (~6x mais barato que o 3.5-flash). O 2.5-flash-lite foi aposentado pelo Google
+# para novos usuários (erro 404 confirmado em 23/07/26).
 # Para trocar de modelo sem deploy: defina GEMINI_MODEL nas envs do Vercel
-GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-lite")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # n8n Config
