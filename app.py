@@ -157,10 +157,7 @@ def analyze_sentiment(text):
                 "role": "user",
                 "parts": [{"text": f"Classifique o sentimento deste comentario em UMA palavra apenas: POSITIVO, NEUTRO ou NEGATIVO. Comentario: {text}"}]
             }],
-            "generationConfig": {
-                "temperature": 0,
-                "thinkingConfig": {"thinkingBudget": 0}  # thinking = tokens de output cobrados; aqui é zero
-            }
+            "generationConfig": {"temperature": 0}
         }
 
         resp = requests.post(url, json=payload, timeout=30)
@@ -177,6 +174,8 @@ def analyze_sentiment(text):
             else:
                 return "NEUTRO"
 
+        # Sem candidates = a API recusou a chamada; mostra o motivo real nos logs
+        print(f"ERRO Gemini API (single): {json.dumps(data)[:400]}")
         return "NEUTRO"
 
     except Exception as e:
@@ -214,13 +213,14 @@ def analyze_sentiments_batch(texts):
         url = f"{GEMINI_URL}?key={GOOGLE_API_KEY}"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature": 0,
-                "thinkingConfig": {"thinkingBudget": 0}
-            }
+            "generationConfig": {"temperature": 0}
         }
         resp = requests.post(url, json=payload, timeout=60)
         data = resp.json()
+        if "candidates" not in data:
+            # Mostra o erro REAL da API nos logs em vez de cair no fallback silencioso
+            print(f"ERRO Gemini API (batch): {json.dumps(data)[:400]}")
+            return ["NEUTRO"] * len(texts)
         result_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
         # Extrai o array JSON mesmo se o modelo embrulhar em ```json
