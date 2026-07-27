@@ -1,6 +1,7 @@
 """
 Betelgeuse TI Comment Moderator + Sentiment Analysis + n8n Integration
 Flask app with Meta App Review compliance + real-time sentiment KPIs
+English UI version (App Review screencast requirement)
 """
 
 import os
@@ -29,22 +30,42 @@ REQUIRED_SCOPES = [
     "pages_show_list",
     "pages_read_engagement",
     "pages_read_user_content",
-    "pages_manage_metadata"  # webhooks de página (App Review; admin concede antes da aprovação)
+    "pages_manage_metadata"  # page webhooks (App Review; admin grants before approval)
 ]
+
+# Human-readable descriptions for each requested permission (landing + dashboard)
+PERMISSION_INFO = {
+    "pages_show_list": {
+        "desc": "Display the list of Facebook Pages you manage",
+        "badge": "green"
+    },
+    "pages_read_engagement": {
+        "desc": "Read posts and metrics to select which post to moderate",
+        "badge": "orange"
+    },
+    "pages_read_user_content": {
+        "desc": "Read comments with author name, message and date for moderation",
+        "badge": "red"
+    },
+    "pages_manage_metadata": {
+        "desc": "Subscribe the Page to real-time webhooks for instant comment notifications",
+        "badge": "purple"
+    }
+}
 
 # Gemini Config
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY", "")
-# Modelo otimizado para custo: 3.1-flash-lite é o tier econômico da geração atual
-# (~6x mais barato que o 3.5-flash). O 2.5-flash-lite foi aposentado pelo Google
-# para novos usuários (erro 404 confirmado em 23/07/26).
-# Para trocar de modelo sem deploy: defina GEMINI_MODEL nas envs do Vercel
+# Cost-optimized model: 3.1-flash-lite is the budget tier of the current generation
+# (~6x cheaper than 3.5-flash). 2.5-flash-lite was retired by Google for new users
+# (404 error confirmed on 2026-07-23).
+# To switch models without a deploy: set GEMINI_MODEL in Vercel env vars
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-lite")
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 
 # n8n Config
 N8N_WEBHOOK_URL = os.environ.get("N8N_WEBHOOK_URL", "")
 
-# Chave para o n8n local chamar /poll_comments sem login (configurar no Vercel)
+# Key for local n8n to call /poll_comments without login (set in Vercel)
 POLL_API_KEY = os.environ.get("POLL_API_KEY", "")
 
 # Webhook Config
@@ -52,12 +73,15 @@ WEBHOOK_VERIFY_TOKEN = os.environ.get("WEBHOOK_VERIFY_TOKEN", "betelgeuse_webhoo
 WEBHOOK_APP_SECRET = os.environ.get("FB_APP_SECRET", "")
 WEBHOOK_LOG_FILE = "webhook_comments.json"
 
-# Page Access Token fixo via variável de ambiente do Vercel (Graph API)
-# Aceita as duas grafias por segurança; se não existir, cai no fluxo /me/accounts
+# In-memory webhook event store (Vercel filesystem is read-only)
+_WEBHOOK_EVENTS = []
+
+# Fixed Page Access Token via Vercel environment variable (Graph API)
+# Accepts both spellings for safety; falls back to /me/accounts flow if absent
 PAGE_ACCESS_TOKEN_ENV = os.environ.get("PAGE_ACCESS_TOKEN") or os.environ.get("PAGE_ACESS_TOKEN") or ""
 
 def get_session_page_token(page_id):
-    """Busca o Page Token da página via /me/accounts usando o token da sessão."""
+    """Fetches the Page Token for the page via /me/accounts using the session token."""
     if "access_token" not in session:
         return None
     try:
@@ -70,14 +94,14 @@ def get_session_page_token(page_id):
             if acc.get("id") == page_id:
                 return acc.get("access_token")
     except Exception as e:
-        print(f"Erro ao buscar page token da sessão: {e}")
+        print(f"Error fetching session page token: {e}")
     return None
 
 def _fb_tokens(page_id=None):
-    """Monta a lista de tokens na ordem de prioridade:
-    1) PAGE_ACCESS_TOKEN do ambiente Vercel;
-    2) Page Token via /me/accounts (sessão);
-    3) User Token da sessão."""
+    """Builds the token list in priority order:
+    1) PAGE_ACCESS_TOKEN from Vercel env;
+    2) Page Token via /me/accounts (session);
+    3) Session User Token."""
     tokens = []
     if PAGE_ACCESS_TOKEN_ENV:
         tokens.append(PAGE_ACCESS_TOKEN_ENV)
@@ -90,8 +114,8 @@ def _fb_tokens(page_id=None):
     return tokens
 
 def fb_get(url_path, params, page_id=None):
-    """GET na Graph API com fallback automático de token.
-    Retorna o primeiro JSON sem 'error'; se todos falharem, retorna o último erro."""
+    """Graph API GET with automatic token fallback.
+    Returns the first JSON without 'error'; if all fail, returns the last error."""
     last_data = {}
     for token in _fb_tokens(page_id):
         try:
@@ -103,16 +127,16 @@ def fb_get(url_path, params, page_id=None):
             data = resp.json()
             if "error" not in data:
                 return data
-            print(f"Graph API recusou token (...{token[-6:]}): {data['error']}")
+            print(f"Graph API rejected token (...{token[-6:]}): {data['error']}")
             last_data = data
         except Exception as e:
-            print(f"Erro na chamada Graph API: {e}")
+            print(f"Graph API call error: {e}")
     return last_data
 
 def fb_get_paginated(url_path, params, page_id=None, max_items=200):
-    """GET paginado: segue paging.next até atingir max_items.
-    Usa o primeiro token que funcionar (mesma ordem do fb_get).
-    Retorna (items, erro) — erro é None em caso de sucesso."""
+    """Paginated GET: follows paging.next until max_items.
+    Uses the first working token (same order as fb_get).
+    Returns (items, error) — error is None on success."""
     last_err = None
     for token in _fb_tokens(page_id):
         items = []
@@ -124,7 +148,7 @@ def fb_get_paginated(url_path, params, page_id=None, max_items=200):
                 data = resp.json()
                 if "error" in data:
                     last_err = data["error"].get("message", str(data["error"]))
-                    print(f"Paginação recusada (...{token[-6:]}): {data['error']}")
+                    print(f"Pagination rejected (...{token[-6:]}): {data['error']}")
                     break
                 batch = data.get("data", [])
                 if not batch:
@@ -134,14 +158,62 @@ def fb_get_paginated(url_path, params, page_id=None, max_items=200):
                 if not next_url:
                     return items, None
                 url = next_url
-                next_params = {}  # paging.next já traz token e cursores
+                next_params = {}  # paging.next already carries token and cursors
             return items[:max_items], None
         except Exception as e:
             last_err = str(e)
-            print(f"Erro na paginação: {e}")
+            print(f"Pagination error: {e}")
     return [], last_err
 
+def fb_post(url_path, params, page_id=None):
+    """Graph API POST with token fallback (e.g. subscribing page to webhooks).
+    Returns (True, None) on success or (False, error_message)."""
+    last_err = "No token available"
+    for token in _fb_tokens(page_id):
+        try:
+            resp = requests.post(
+                f"{FB_BASE_URL}/{url_path}",
+                params={**params, "access_token": token},
+                timeout=30
+            )
+            data = resp.json()
+            if "error" not in data:
+                return True, None
+            print(f"POST rejected (...{token[-6:]}): {data['error']}")
+            last_err = data["error"].get("message", str(data["error"]))
+        except Exception as e:
+            last_err = str(e)
+    return False, last_err
 
+def get_granted_permissions():
+    """Queries /me/permissions with the session user token and returns
+    the set of permissions with status 'granted'."""
+    granted = set()
+    if "access_token" not in session:
+        return granted
+    try:
+        resp = requests.get(
+            f"{FB_BASE_URL}/me/permissions",
+            params={"access_token": session["access_token"]},
+            timeout=30
+        )
+        for item in resp.json().get("data", []):
+            if item.get("status") == "granted":
+                granted.add(item.get("permission"))
+    except Exception as e:
+        print(f"Error fetching permissions: {e}")
+    return granted
+
+def is_page_subscribed(page_id):
+    """Checks whether the app is already subscribed to this Page's webhooks."""
+    try:
+        status = fb_get(f"{page_id}/subscribed_apps", {}, page_id=page_id)
+        for app_entry in status.get("data", []):
+            if str(app_entry.get("id")) == str(FB_APP_ID):
+                return True
+    except Exception as e:
+        print(f"Error checking subscription: {e}")
+    return False
 
 # =============================================================================
 # SENTIMENT ANALYSIS (Gemini) - NO CACHE (Vercel read-only filesystem)
@@ -176,48 +248,28 @@ def analyze_sentiment(text):
             else:
                 return "NEUTRO"
 
-        # Sem candidates = a API recusou a chamada; mostra o motivo real nos logs
-        print(f"ERRO Gemini API (single): {json.dumps(data)[:400]}")
+        # No candidates = API refused the call; log the real reason
+        print(f"Gemini API ERROR (single): {json.dumps(data)[:400]}")
         return "NEUTRO"
 
     except Exception as e:
-        print(f"Erro Gemini: {e}")
+        print(f"Gemini error: {e}")
         return "NEUTRO"
-
-def fb_post(url_path, params, page_id=None):
-    """POST na Graph API com fallback de token (ex.: inscrever página nos webhooks).
-    Retorna (True, None) no sucesso ou (False, mensagem_erro)."""
-    last_err = "Nenhum token disponível"
-    for token in _fb_tokens(page_id):
-        try:
-            resp = requests.post(
-                f"{FB_BASE_URL}/{url_path}",
-                params={**params, "access_token": token},
-                timeout=30
-            )
-            data = resp.json()
-            if "error" not in data:
-                return True, None
-            print(f"POST recusado (...{token[-6:]}): {data['error']}")
-            last_err = data["error"].get("message", str(data["error"]))
-        except Exception as e:
-            last_err = str(e)
-    return False, last_err
 
 def get_sentiment(text, comment_id):
     """Get sentiment - no cache, direct analysis every time"""
     return analyze_sentiment(text)
 
 # =============================================================================
-# ANÁLISE EM LOTE (anti-custo): 20 comentários por chamada Gemini
-# Antes: 1 chamada por comentário (500 comentários = 500 chamadas)
-# Agora: 500 comentários = 25 chamadas → ~95% menos requisições e tokens
+# BATCH ANALYSIS (cost control): 20 comments per Gemini call
+# Before: 1 call per comment (500 comments = 500 calls)
+# Now: 500 comments = 25 calls -> ~95% fewer requests and tokens
 # =============================================================================
 BATCH_SIZE = 20
 
 def analyze_sentiments_batch(texts):
-    """Analisa até BATCH_SIZE textos em UMA chamada Gemini.
-    Retorna lista de sentimentos na MESMA ORDEM dos textos."""
+    """Analyzes up to BATCH_SIZE texts in ONE Gemini call.
+    Returns a list of sentiments in the SAME ORDER as the texts."""
     if not texts:
         return []
     if not GOOGLE_API_KEY:
@@ -240,12 +292,12 @@ def analyze_sentiments_batch(texts):
         resp = requests.post(url, json=payload, timeout=60)
         data = resp.json()
         if "candidates" not in data:
-            # Mostra o erro REAL da API nos logs em vez de cair no fallback silencioso
-            print(f"ERRO Gemini API (batch): {json.dumps(data)[:400]}")
+            # Shows the REAL API error in logs instead of silent fallback
+            print(f"Gemini API ERROR (batch): {json.dumps(data)[:400]}")
             return ["NEUTRO"] * len(texts)
         result_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
 
-        # Extrai o array JSON mesmo se o modelo embrulhar em ```json
+        # Extracts the JSON array even if the model wraps it in ```json
         match = re.search(r"\[.*\]", result_text, re.DOTALL)
         if match:
             arr = json.loads(match.group(0))
@@ -258,20 +310,20 @@ def analyze_sentiments_batch(texts):
                     sentiments.append("NEGATIVO")
                 else:
                     sentiments.append("NEUTRO")
-            # Se o modelo retornou menos itens, completa com NEUTRO
+            # If the model returned fewer items, pad with NEUTRO
             while len(sentiments) < len(texts):
                 sentiments.append("NEUTRO")
             return sentiments
 
-        print(f"Batch Gemini: resposta sem JSON array: {result_text[:120]}")
+        print(f"Gemini batch: response without JSON array: {result_text[:120]}")
         return ["NEUTRO"] * len(texts)
 
     except Exception as e:
-        print(f"Erro Gemini batch: {e}")
+        print(f"Gemini batch error: {e}")
         return ["NEUTRO"] * len(texts)
 
 def analyze_many(texts):
-    """Divide a lista em lotes de BATCH_SIZE e processa os lotes em paralelo."""
+    """Splits the list into BATCH_SIZE chunks and processes batches in parallel."""
     if not texts:
         return []
     batches = [texts[i:i + BATCH_SIZE] for i in range(0, len(texts), BATCH_SIZE)]
@@ -281,18 +333,19 @@ def analyze_many(texts):
             results.extend(batch_result)
     return results
 
-# Mapa PT -> EN: o Gemini responde em português (POSITIVO/NEUTRO/NEGATIVO),
-# mas os contadores e as classes CSS do template usam inglês (positive/neutral/negative)
+# PT -> EN map: Gemini answers in Portuguese (POSITIVO/NEUTRO/NEGATIVO);
+# CSS classes and display badges use English
 SENTIMENT_EN = {"POSITIVO": "positive", "NEUTRO": "neutral", "NEGATIVO": "negative"}
+SENTIMENT_DISPLAY = {"POSITIVO": "POSITIVE", "NEUTRO": "NEUTRAL", "NEGATIVO": "NEGATIVE"}
 
-# Cache em memória (filesystem do Vercel é read-only)
+# In-memory cache (Vercel filesystem is read-only)
 _SENTIMENT_CACHE = {}
 
 def load_sentiment_cache():
     return _SENTIMENT_CACHE
 
 def save_sentiment_cache(cache):
-    pass  # sem persistência em disco no Vercel
+    pass  # no disk persistence on Vercel
 
 # =============================================================================
 # n8n WEBHOOK
@@ -301,15 +354,61 @@ def save_sentiment_cache(cache):
 def send_to_n8n(summary_data):
     """Send summary to n8n webhook"""
     if not N8N_WEBHOOK_URL:
-        print("N8N_WEBHOOK_URL não configurado")
+        print("N8N_WEBHOOK_URL not configured")
         return False
 
     try:
         resp = requests.post(N8N_WEBHOOK_URL, json=summary_data, timeout=30)
         return resp.status_code == 200
     except Exception as e:
-        print(f"Erro n8n: {e}")
+        print(f"n8n error: {e}")
         return False
+
+# =============================================================================
+# WEBHOOK SECURITY HELPERS (these were missing — POST /webhook would crash)
+# =============================================================================
+
+def verify_signature(payload_body, signature_header):
+    """Validates the X-Hub-Signature-256 header sent by Meta.
+    Signature = HMAC-SHA256(payload, APP_SECRET), hex-encoded, prefixed 'sha256='.
+    If APP_SECRET is not configured, accept (dev mode) but log a warning."""
+    if not WEBHOOK_APP_SECRET:
+        print("WARNING: FB_APP_SECRET empty — skipping webhook signature validation")
+        return True
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+    expected = hmac.new(
+        WEBHOOK_APP_SECRET.encode("utf-8"),
+        payload_body,
+        hashlib.sha256
+    ).hexdigest()
+    received = signature_header.split("sha256=", 1)[1]
+    return hmac.compare_digest(expected, received)
+
+def save_webhook_payload(payload):
+    """Stores the webhook payload in memory (Vercel filesystem is read-only).
+    Also attempts a best-effort file write for local runs."""
+    try:
+        _WEBHOOK_EVENTS.append({
+            "received_at": datetime.now().isoformat(),
+            "payload": payload
+        })
+        # Keep only the last 100 events in memory
+        if len(_WEBHOOK_EVENTS) > 100:
+            del _WEBHOOK_EVENTS[:-100]
+    except Exception as e:
+        print(f"Error storing webhook payload (memory): {e}")
+    # Best effort: local dev only (fails silently on Vercel read-only FS)
+    try:
+        data = []
+        if os.path.exists(WEBHOOK_LOG_FILE):
+            with open(WEBHOOK_LOG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        data.append({"received_at": datetime.now().isoformat(), "payload": payload})
+        with open(WEBHOOK_LOG_FILE, "w", encoding="utf-8") as f:
+            json.dump(data[-100:], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
 
 # =============================================================================
 # HTML TEMPLATES
@@ -317,11 +416,11 @@ def send_to_n8n(summary_data):
 
 BASE_TEMPLATE = """
 <!DOCTYPE html>
-<html lang="pt-BR">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Betelgeuse TI - Moderador de Comentários</title>
+    <title>Betelgeuse TI - Comment Moderator</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { 
@@ -359,6 +458,49 @@ BASE_TEMPLATE = """
         .permission-badge.green { background: #e8f5e9; color: #2e7d32; border-color: #a5d6a7; }
         .permission-badge.orange { background: #fff3e0; color: #ef6c00; border-color: #ffcc80; }
         .permission-badge.purple { background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
+
+        .granted-check {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: #2e7d32;
+            font-size: 12px;
+            font-weight: 700;
+            margin-left: 8px;
+        }
+        .not-granted {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            color: #c62828;
+            font-size: 12px;
+            font-weight: 700;
+            margin-left: 8px;
+        }
+
+        .authorized-seal {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            background: #e8f5e9;
+            border: 2px solid #2e7d32;
+            border-radius: 12px;
+            padding: 16px 20px;
+        }
+        .authorized-seal .seal-icon {
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            background: #2e7d32;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 22px;
+            font-weight: 700;
+            flex-shrink: 0;
+        }
+        .authorized-seal .seal-title { color: #2e7d32; font-weight: 700; font-size: 16px; }
+        .authorized-seal .seal-desc { color: #4a4a4a; font-size: 13px; }
 
         .card {
             background: white;
@@ -626,7 +768,7 @@ BASE_TEMPLATE = """
 <body>
     <div class="header">
         <h1>🌟 Betelgeuse TI</h1>
-        <p>MODERADOR DE COMENTÁRIOS COM ANÁLISE DE SENTIMENTO</p>
+        <p>COMMENT MODERATION WITH SENTIMENT ANALYSIS</p>
     </div>
     <div class="container">
         {{ content | safe }}
@@ -647,7 +789,7 @@ BASE_TEMPLATE = """
                 card.classList.add('hidden-comment');
                 const actions = card.querySelector('.comment-actions');
                 if (actions) {
-                    actions.innerHTML = '<span class="hidden-label">🚫 Ocultado pelo moderador</span>';
+                    actions.innerHTML = '<span class="hidden-label">🚫 Hidden by moderator</span>';
                 }
             }
         }
@@ -671,27 +813,31 @@ BASE_TEMPLATE = """
 HOME_TEMPLATE = """
 <div class="card" style="text-align: center; max-width: 600px; margin: 40px auto;">
     <div class="permission-badge">App Review Screencast</div>
-    <h2 style="font-size: 22px; margin-bottom: 12px;">Moderação de Comentários com IA</h2>
+    <h2 style="font-size: 22px; margin-bottom: 12px;">AI-Powered Comment Moderation</h2>
     <p style="color: #65676b; margin-bottom: 24px;">
-        Monitore e analise comentários em tempo real com classificação de sentimento (Positivo, Neutro, Negativo).
-        Processamento em tempo real. Sem armazenamento de dados.
+        Monitor and analyze comments in real time with sentiment classification (Positive, Neutral, Negative).
+        Real-time processing. No data storage.
     </p>
 
     <div style="text-align: left; margin-bottom: 24px;">
         <div class="privacy-card">
-            <h3>🔐 Permissões Solicitadas</h3>
+            <h3>🔐 Requested Permissions</h3>
             <div style="margin-top: 12px;">
                 <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
+                    <strong style="color: #1877f2;">pages_show_list</strong>
+                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Display the list of Facebook Pages you manage</p>
+                </div>
+                <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
                     <strong style="color: #1877f2;">pages_read_engagement</strong>
-                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Ler posts e métricas para selecionar qual post moderar</p>
+                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Read posts and metrics to select which post to moderate</p>
                 </div>
                 <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px;">
                     <strong style="color: #1877f2;">pages_read_user_content</strong>
-                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Ler comentários com nome do autor, mensagem e data para moderação</p>
+                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Read comments with author name, message and date for moderation</p>
                 </div>
                 <div style="background: white; padding: 12px; border-radius: 8px;">
-                    <strong style="color: #1877f2;">pages_show_list</strong>
-                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Exibir lista de Páginas que você gerencia</p>
+                    <strong style="color: #1877f2;">pages_manage_metadata</strong>
+                    <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Subscribe the Page to real-time webhooks for instant comment notifications</p>
                 </div>
             </div>
         </div>
@@ -699,16 +845,16 @@ HOME_TEMPLATE = """
 
     <a href="/login" class="btn btn-primary" style="font-size: 16px;">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="white"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
-        Entrar com Facebook
+        Log in with Facebook
     </a>
 
     <div class="privacy-card" style="margin-top: 24px; text-align: left;">
-        <h3>🔒 Compromisso de Privacidade</h3>
+        <h3>🔒 Privacy Commitment</h3>
         <ul>
-            <li>Sem armazenamento de dados — processamento em tempo real</li>
-            <li>Sessão limpa ao sair</li>
-            <li>Revogue acesso a qualquer momento nas Configurações do Facebook</li>
-            <li>Empresa verificada por CNPJ 51.770.524/0001-87</li>
+            <li>No data storage — real-time processing only</li>
+            <li>Session cleared on logout</li>
+            <li>Revoke access anytime in Facebook Settings</li>
+            <li>Verified company — CNPJ 51.770.524/0001-87</li>
         </ul>
     </div>
 </div>
@@ -718,30 +864,48 @@ DASHBOARD_TEMPLATE = """
 <div class="step-indicator">
     <div class="step active">
         <div class="step-number">1</div>
-        <span>Escolher Página</span>
+        <span>Choose Page</span>
     </div>
     <div class="step">
         <div class="step-number">2</div>
-        <span>Escolher Post</span>
+        <span>Choose Post</span>
     </div>
     <div class="step">
         <div class="step-number">3</div>
-        <span>Moderar Comentários</span>
+        <span>Moderate Comments</span>
     </div>
 </div>
 
 <div class="alert alert-success">
-    ✅ <strong>Autenticado com sucesso.</strong> Selecione uma Página para começar a moderar.
+    ✅ <strong>Successfully authenticated.</strong> Select a Page to start moderating.
+</div>
+
+<div class="card">
+    <div class="card-title">🔐 Permission Status</div>
+    <p class="card-desc">Live status of each permission granted to this app (read from your Facebook account via <code>/me/permissions</code>).</p>
+    {% for scope in required_scopes %}
+    <div style="background: #f8f9fa; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+        <div>
+            <strong style="color: #1877f2;">{{ scope }}</strong>
+            <p style="font-size: 13px; color: #65676b; margin-top: 2px;">{{ permission_info[scope].desc }}</p>
+        </div>
+        {% if scope in granted_permissions %}
+        <span class="granted-check">✓ Granted</span>
+        {% else %}
+        <span class="not-granted">⚠ Not granted</span>
+        {% endif %}
+    </div>
+    {% endfor %}
 </div>
 
 <div class="card">
     <span class="permission-badge green">pages_show_list</span>
-    <div class="card-title">📋 Escolha sua Página</div>
-    <p class="card-desc">Selecione uma Página do Facebook para carregar posts para moderação.</p>
+    <div class="card-title">📋 Choose your Page</div>
+    <p class="card-desc">Select a Facebook Page to load posts for moderation.</p>
 
     <form action="/posts" method="get">
         <select name="page_id" required onchange="this.form.submit()">
-            <option value="">-- Selecione uma Página --</option>
+            <option value="">-- Select a Page --</option>
             {% for page in pages %}
             <option value="{{ page.id }}">{{ page.name }}</option>
             {% endfor %}
@@ -749,68 +913,81 @@ DASHBOARD_TEMPLATE = """
     </form>
 
     <p style="margin-top: 12px; font-size: 13px; color: #65676b;">
-        {{ pages|length }} Página(s) encontrada(s)
+        {{ pages|length }} Page(s) found
     </p>
 </div>
 
 <div style="text-align: center;">
-    <a href="/logout" class="btn btn-outline">↩️ Desconectar</a>
+    <a href="/logout" class="btn btn-outline">↩️ Log out</a>
 </div>
 """
 
 POSTS_TEMPLATE = """
-<a href="/" class="back-btn">← Voltar para Páginas</a>
+<a href="/" class="back-btn">← Back to Pages</a>
 
 <div class="step-indicator">
     <div class="step">
         <div class="step-number">1</div>
-        <span>Escolher Página</span>
+        <span>Choose Page</span>
     </div>
     <div class="step active">
         <div class="step-number">2</div>
-        <span>Escolher Post</span>
+        <span>Choose Post</span>
     </div>
     <div class="step">
         <div class="step-number">3</div>
-        <span>Moderar Comentários</span>
+        <span>Moderate Comments</span>
     </div>
 </div>
 
 {% if webhook_status %}
 <div class="alert {{ 'alert-success' if webhook_status == 'ativo' else 'alert-info' }}">
     {% if webhook_status == 'ativo' %}
-    ✅ <strong>Webhooks ativos nesta página!</strong> Novos comentários chegarão em tempo real.
+    ✅ <strong>Webhooks active on this Page!</strong> New comments will arrive in real time.
     {% else %}
-    ⚠️ <strong>Falha ao ativar webhooks:</strong> {{ webhook_status }}
+    ⚠️ <strong>Failed to enable webhooks:</strong> {{ webhook_status }}
     {% endif %}
 </div>
 {% endif %}
 
 <div class="card">
     <span class="permission-badge purple">pages_manage_metadata</span>
-    <div class="card-title">🔔 Notificações em Tempo Real (Webhooks)</div>
-    <p class="card-desc">Assine os eventos desta página para receber novos comentários em tempo real, sem polling.</p>
-    <a href="/subscribe_webhook?page_id={{ page_id }}" class="btn btn-primary">🔔 Ativar Webhooks nesta Página</a>
+    <div class="card-title">🔔 Real-Time Notifications (Webhooks)</div>
+    {% if webhook_subscribed %}
+    <div class="authorized-seal">
+        <div class="seal-icon">✓</div>
+        <div>
+            <div class="seal-title">Authorized</div>
+            <div class="seal-desc">
+                This Page is subscribed to real-time comment notifications
+                (<code>pages_manage_metadata</code> granted — subscribed to the <code>feed</code> field).
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <p class="card-desc">Subscribe to this Page's events to receive new comments in real time, without polling.</p>
+    <a href="/subscribe_webhook?page_id={{ page_id }}" class="btn btn-primary">🔔 Enable Webhooks on this Page</a>
+    {% endif %}
 </div>
 
 <div class="card">
     <span class="permission-badge orange">pages_read_engagement</span>
-    <div class="card-title">📝 Escolha um Post</div>
-    <p class="card-desc">Selecione um post para visualizar e moderar seus comentários com análise de sentimento.</p>
+    <div class="card-title">📝 Choose a Post</div>
+    <p class="card-desc">Select a post to view and moderate its comments with sentiment analysis.</p>
 
     <div class="post-grid">
         {% for post in posts %}
         <div class="post-card" onclick="window.location.href='/comments?post_id={{ post.id }}&page_id={{ page_id }}'">
             {% if post.picture %}
-            <img src="{{ post.picture }}" alt="Imagem do post">
+            <img src="{{ post.picture }}" alt="Post image">
             {% else %}
-            <div style="height: 160px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;">📄 Post de Texto</div>
+            <div style="height: 160px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; align-items: center; justify-content: center; color: white; font-size: 14px;">📄 Text Post</div>
             {% endif %}
             <div class="post-card-body">
                 <div class="post-card-title">{{ post.message[:60] }}{% if post.message|length > 60 %}...{% endif %}</div>
                 <div class="post-card-meta">
                     📅 {{ post.created_time[:10] }} 
-                    💬 {{ post.comments_count }} comentários
+                    💬 {{ post.comments_count }} comments
                 </div>
             </div>
         </div>
@@ -820,31 +997,31 @@ POSTS_TEMPLATE = """
 """
 
 COMMENTS_TEMPLATE = """
-<a href="/posts?page_id={{ page_id }}" class="back-btn">← Voltar para Posts</a>
+<a href="/posts?page_id={{ page_id }}" class="back-btn">← Back to Posts</a>
 
 <div class="step-indicator">
     <div class="step">
         <div class="step-number">1</div>
-        <span>Escolher Página</span>
+        <span>Choose Page</span>
     </div>
     <div class="step">
         <div class="step-number">2</div>
-        <span>Escolher Post</span>
+        <span>Choose Post</span>
     </div>
     <div class="step active">
         <div class="step-number">3</div>
-        <span>Moderar Comentários</span>
+        <span>Moderate Comments</span>
     </div>
 </div>
 
 <div class="card">
     <span class="permission-badge red">pages_read_user_content</span>
-    <div class="card-title">💬 Moderar Comentários com Análise de Sentimento</div>
-    <p class="card-desc">Revise comentários em tempo real. Classificação automática: Positivo, Neutro, Negativo.</p>
+    <div class="card-title">💬 Moderate Comments with Sentiment Analysis</div>
+    <p class="card-desc">Review comments in real time. Automatic classification: Positive, Neutral, Negative.</p>
 
     <p style="font-size: 13px; color: #65676b; margin-bottom: 16px;">
-        💬 Exibindo os <strong>{{ comments|length }}</strong> comentários mais recentes
-        {% if truncated %}— este post tem mais; ajuste o limite:{% else %}— ajustar limite:{% endif %}
+        💬 Showing the <strong>{{ comments|length }}</strong> most recent comments
+        {% if truncated %}— this post has more; adjust the limit:{% else %}— adjust limit:{% endif %}
         <a href="/comments?post_id={{ post_id }}&page_id={{ page_id }}&max=100" style="color:#1877f2;">100</a> ·
         <a href="/comments?post_id={{ post_id }}&page_id={{ page_id }}&max=200" style="color:#1877f2;">200</a> ·
         <a href="/comments?post_id={{ post_id }}&page_id={{ page_id }}&max=500" style="color:#1877f2;">500</a>
@@ -852,24 +1029,24 @@ COMMENTS_TEMPLATE = """
 
     {% if fb_error and comments|length == 0 %}
     <div class="alert" style="background: #ffebee; color: #c62828; border: 1px solid #ef9a9a;">
-        ⚠️ <strong>A Graph API não retornou comentários.</strong> Detalhe técnico: {{ fb_error }}
+        ⚠️ <strong>The Graph API returned no comments.</strong> Technical detail: {{ fb_error }}
     </div>
     {% endif %}
 
     <div class="stats-grid">
         <div class="stat-box positive">
             <div class="stat-value positive">{{ sentiment_counts.positive|default(0) }}</div>
-            <div class="stat-label">😊 Positivos</div>
+            <div class="stat-label">😊 Positive</div>
             <div style="font-size: 11px; color: #2e7d32;">{{ sentiment_pct.positive|default(0) }}%</div>
         </div>
         <div class="stat-box neutral">
             <div class="stat-value neutral">{{ sentiment_counts.neutral|default(0) }}</div>
-            <div class="stat-label">😐 Neutros</div>
+            <div class="stat-label">😐 Neutral</div>
             <div style="font-size: 11px; color: #f9a825;">{{ sentiment_pct.neutral|default(0) }}%</div>
         </div>
         <div class="stat-box negative">
             <div class="stat-value negative">{{ sentiment_counts.negative|default(0) }}</div>
-            <div class="stat-label">😠 Negativos</div>
+            <div class="stat-label">😠 Negative</div>
             <div style="font-size: 11px; color: #c62828;">{{ sentiment_pct.negative|default(0) }}%</div>
         </div>
         <div class="stat-box">
@@ -880,10 +1057,10 @@ COMMENTS_TEMPLATE = """
     </div>
 
     <div class="filter-buttons">
-        <button class="filter-btn active" data-filter="all" onclick="filterComments('all')">Todos ({{ comments|length }})</button>
-        <button class="filter-btn positive" data-filter="positive" onclick="filterComments('positive')">😊 Positivos ({{ sentiment_counts.positive|default(0) }})</button>
-        <button class="filter-btn neutral" data-filter="neutral" onclick="filterComments('neutral')">😐 Neutros ({{ sentiment_counts.neutral|default(0) }})</button>
-        <button class="filter-btn negative" data-filter="negative" onclick="filterComments('negative')">😠 Negativos ({{ sentiment_counts.negative|default(0) }})</button>
+        <button class="filter-btn active" data-filter="all" onclick="filterComments('all')">All ({{ comments|length }})</button>
+        <button class="filter-btn positive" data-filter="positive" onclick="filterComments('positive')">😊 Positive ({{ sentiment_counts.positive|default(0) }})</button>
+        <button class="filter-btn neutral" data-filter="neutral" onclick="filterComments('neutral')">😐 Neutral ({{ sentiment_counts.neutral|default(0) }})</button>
+        <button class="filter-btn negative" data-filter="negative" onclick="filterComments('negative')">😠 Negative ({{ sentiment_counts.negative|default(0) }})</button>
     </div>
 
     {% for comment in comments %}
@@ -895,22 +1072,22 @@ COMMENTS_TEMPLATE = """
                 <div class="comment-author">{{ comment.from_name or 'Facebook User' }}</div>
                 <div class="comment-id">ID: {{ comment.id }}</div>
             </div>
-            <span class="sentiment-badge sentiment-{{ sentiment }}">{{ comment.sentiment|default('NEUTRO') }}</span>
+            <span class="sentiment-badge sentiment-{{ sentiment }}">{{ comment.sentiment_display|default('NEUTRAL') }}</span>
         </div>
         <div class="comment-text">{{ comment.message }}</div>
         <div class="comment-meta">
             <span>📅 {{ comment.created_time[:10] }}</span>
-            <span>❤️ {{ comment.like_count }} curtidas</span>
+            <span>❤️ {{ comment.like_count }} likes</span>
             <span>⏰ {{ comment.created_time }}</span>
         </div>
         <div class="comment-actions">
             <button class="btn btn-danger" onclick="hideComment('{{ comment.id }}')">
-                🚫 Ocultar Comentário
+                🚫 Hide Comment
             </button>
             <a href="{{ comment.fb_url }}" 
                target="_blank" 
                class="btn btn-outline">
-                🔗 Ver no Facebook
+                🔗 View on Facebook
             </a>
         </div>
     </div>
@@ -921,7 +1098,7 @@ COMMENTS_TEMPLATE = """
 PRIVACY_TEMPLATE = """
 <div class="card">
     <h1 style="color: #1877f2; margin-bottom: 8px;">Privacy Policy</h1>
-    <p style="color: #65676b; font-size: 13px; margin-bottom: 24px;">Updated: May 30, 2026</p>
+    <p style="color: #65676b; font-size: 13px; margin-bottom: 24px;">Updated: July 27, 2026</p>
 
     <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.524/0001-87</p>
 
@@ -931,6 +1108,7 @@ PRIVACY_TEMPLATE = """
         <li>Names and IDs of Facebook Pages you administer (via <code>pages_show_list</code>)</li>
         <li>Post content, IDs, and creation dates (via <code>pages_read_engagement</code>)</li>
         <li>Author names, author IDs, comment text, creation dates, and like counts (via <code>pages_read_user_content</code>)</li>
+        <li>Page webhook subscription status (via <code>pages_manage_metadata</code>)</li>
     </ul>
 
     <h3 style="margin: 20px 0 8px;">2. No Data Storage</h3>
@@ -1060,6 +1238,11 @@ DATA_USE_TEMPLATE = """
                 <td style="padding: 12px; border: 1px solid #ddd; font-size: 13px;">Author name, author ID, message, created_time, like_count</td>
                 <td style="padding: 12px; border: 1px solid #ddd; font-size: 13px;">Display comments for moderation</td>
             </tr>
+            <tr style="background: #f8f9fa;">
+                <td style="padding: 12px; border: 1px solid #ddd; font-size: 13px;"><code>pages_manage_metadata</code></td>
+                <td style="padding: 12px; border: 1px solid #ddd; font-size: 13px;">Webhook subscription status (subscribed_apps edge)</td>
+                <td style="padding: 12px; border: 1px solid #ddd; font-size: 13px;">Subscribe the Page to real-time comment notifications</td>
+            </tr>
         </tbody>
     </table>
 
@@ -1144,9 +1327,18 @@ def dashboard():
         data = resp.json()
         pages = data.get("data", [])
 
+        # Live permission status for the dashboard checklist
+        granted = get_granted_permissions()
+
         return render_template_string(
             BASE_TEMPLATE,
-            content=render_template_string(DASHBOARD_TEMPLATE, pages=pages)
+            content=render_template_string(
+                DASHBOARD_TEMPLATE,
+                pages=pages,
+                required_scopes=REQUIRED_SCOPES,
+                permission_info=PERMISSION_INFO,
+                granted_permissions=granted
+            )
         )
     except Exception as e:
         return f"Error: {str(e)}", 500
@@ -1184,13 +1376,17 @@ def posts():
                 "comments_count": post.get("comments", {}).get("summary", {}).get("total_count", 0)
             })
 
+        # Check whether this Page is already subscribed to webhooks (Authorized seal)
+        webhook_subscribed = is_page_subscribed(page_id)
+
         return render_template_string(
             BASE_TEMPLATE,
             content=render_template_string(
                 POSTS_TEMPLATE,
                 posts=posts,
                 page_id=page_id,
-                webhook_status=request.args.get("webhook", "")
+                webhook_status=request.args.get("webhook", ""),
+                webhook_subscribed=webhook_subscribed
             )
         )
 
@@ -1215,8 +1411,8 @@ def comments():
         except ValueError:
             max_items = 200
 
-        # Paginação real: busca até max_items comentários
-        # (filter=stream = combinação comprovada em produção com o page token)
+        # Real pagination: fetch up to max_items comments
+        # (filter=stream = proven combination in production with the page token)
         comments_data, fb_error = fb_get_paginated(
             f"{post_id}/comments",
             {"fields": "id,from,message,created_time,like_count,permalink_url",
@@ -1226,7 +1422,7 @@ def comments():
         )
         truncated = len(comments_data) >= max_items
 
-        # Sentimento em PRÉ-PASSE paralelo (5 threads) com cache em memória
+        # Sentiment in a parallel PRE-PASS (5 threads) with in-memory cache
         cache = load_sentiment_cache()
         sentiments = {}
         pending = []
@@ -1262,7 +1458,7 @@ def comments():
             if isinstance(fb_url, str):
                 fb_url = fb_url.replace("https://www.facebook.com/https://www.facebook.com/", "https://www.facebook.com/")
 
-            # Sentimento já calculado no pré-passe paralelo
+            # Sentiment already computed in the parallel pre-pass
             sentiment = sentiments.get(c["id"], "NEUTRO")
             sentiment_en = SENTIMENT_EN.get(sentiment, "neutral")
             sentiment_counts[sentiment_en] += 1
@@ -1275,7 +1471,8 @@ def comments():
                 "like_count": c.get("like_count", 0),
                 "fb_url": fb_url,
                 "sentiment": sentiment,
-                "sentiment_en": sentiment_en
+                "sentiment_en": sentiment_en,
+                "sentiment_display": SENTIMENT_DISPLAY.get(sentiment, "NEUTRAL")
             })
             total_likes += c.get("like_count", 0)
 
@@ -1313,12 +1510,12 @@ def logout():
 
 @app.route("/test_gemini")
 def test_gemini():
-    """Diagnóstico temporário: faz 1 chamada ao Gemini e mostra a resposta CRUA.
-    Uso: /test_gemini?key=SUA_POLL_API_KEY"""
+    """Temporary diagnostic: makes 1 Gemini call and shows the RAW response.
+    Usage: /test_gemini?key=YOUR_POLL_API_KEY"""
     if request.args.get("key") != POLL_API_KEY:
-        return jsonify({"erro": "Não autorizado"}), 401
+        return jsonify({"error": "Not authorized"}), 401
     if not GOOGLE_API_KEY:
-        return jsonify({"ok": False, "erro": "GOOGLE_API_KEY está VAZIA nas envs do Vercel"})
+        return jsonify({"ok": False, "error": "GOOGLE_API_KEY is EMPTY in Vercel env vars"})
     try:
         url = f"{GEMINI_URL}?key={GOOGLE_API_KEY}"
         payload = {
@@ -1327,12 +1524,12 @@ def test_gemini():
         }
         resp = requests.post(url, json=payload, timeout=30)
         return jsonify({
-            "modelo_usado": GEMINI_MODEL,
+            "model_used": GEMINI_MODEL,
             "http_status": resp.status_code,
-            "resposta_crua": resp.json()
+            "raw_response": resp.json()
         })
     except Exception as e:
-        return jsonify({"ok": False, "erro": str(e)})
+        return jsonify({"ok": False, "error": str(e)})
 
 # =============================================================================
 # LEGAL PAGES
@@ -1360,8 +1557,8 @@ def data_use():
 
 @app.route("/subscribe_webhook")
 def subscribe_webhook():
-    """Inscreve a página selecionada nos webhooks do app (campo 'feed').
-    Usa pages_manage_metadata — é a ação demonstrada no screencast do App Review."""
+    """Subscribes the selected page to the app's webhooks ('feed' field).
+    Uses pages_manage_metadata — this is the action demonstrated in the App Review screencast."""
     if "access_token" not in session and not PAGE_ACCESS_TOKEN_ENV:
         return redirect("/")
 
@@ -1369,17 +1566,17 @@ def subscribe_webhook():
     if not page_id:
         return redirect("/dashboard")
 
-    # 1) Já está inscrita?
+    # 1) Already subscribed?
     status = fb_get(f"{page_id}/subscribed_apps", {}, page_id=page_id)
     for app_entry in status.get("data", []):
         if str(app_entry.get("id")) == str(FB_APP_ID):
-            print(f"Página {page_id} já estava inscrita nos webhooks.")
+            print(f"Page {page_id} was already subscribed to webhooks.")
             return redirect(f"/posts?page_id={page_id}&webhook=ativo")
 
-    # 2) Inscreve no campo 'feed' (posts, comentários, reações)
+    # 2) Subscribe to the 'feed' field (posts, comments, reactions)
     ok, err = fb_post(f"{page_id}/subscribed_apps", {"subscribed_fields": "feed"}, page_id=page_id)
     if ok:
-        print(f"Página {page_id} inscrita nos webhooks (feed) com sucesso!")
+        print(f"Page {page_id} subscribed to webhooks (feed) successfully!")
         return redirect(f"/posts?page_id={page_id}&webhook=ativo")
     return redirect(f"/posts?page_id={page_id}&webhook=erro:{err}")
 
@@ -1390,10 +1587,10 @@ def webhook_verify():
     challenge = request.args.get("hub.challenge")
 
     if mode == "subscribe" and token == WEBHOOK_VERIFY_TOKEN:
-        print(f"Webhook verificado com sucesso. Challenge: {challenge}")
+        print(f"Webhook verified successfully. Challenge: {challenge}")
         return challenge, 200
     else:
-        print(f"Falha na verificação. mode={mode}, token={token}")
+        print(f"Verification failed. mode={mode}, token={token}")
         return "Verification failed", 403
 
 @app.route("/webhook", methods=["POST"])
@@ -1402,30 +1599,32 @@ def webhook_receive():
     payload_body = request.get_data()
 
     if not verify_signature(payload_body, signature):
-        print("Assinatura inválida!")
+        print("Invalid signature!")
         return "Invalid signature", 403
 
     try:
         payload = request.get_json()
-        print(f"Webhook recebido: {json.dumps(payload, indent=2)}")
+        print(f"Webhook received: {json.dumps(payload, indent=2)}")
 
         save_webhook_payload(payload)
 
         return "OK", 200
 
     except Exception as e:
-        print(f"Erro ao processar webhook: {e}")
+        print(f"Error processing webhook: {e}")
         return "Error", 500
 
 @app.route("/webhook/logs")
 def webhook_logs():
+    # In-memory events first (works on Vercel), then file fallback (local dev)
+    if _WEBHOOK_EVENTS:
+        return jsonify(_WEBHOOK_EVENTS)
     try:
         if os.path.exists(WEBHOOK_LOG_FILE):
             with open(WEBHOOK_LOG_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return jsonify(data)
-        else:
-            return jsonify([])
+        return jsonify([])
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -1436,15 +1635,15 @@ def webhook_logs():
 @app.route("/poll_comments")
 def poll_comments():
     """
-    Endpoint de polling para o n8n (local) consultar o Vercel.
-    Autenticação: ?key=POLL_API_KEY  ou  sessão logada no navegador.
-    Retorna: todos os posts do período + comentários + sentimentos (detalhado por post).
+    Polling endpoint for local n8n to query Vercel.
+    Auth: ?key=POLL_API_KEY  or  logged-in browser session.
+    Returns: all posts in the period + comments + sentiments (detailed per post).
     """
     key = request.args.get("key", "")
     if POLL_API_KEY and key == POLL_API_KEY:
-        pass  # acesso autorizado via n8n
+        pass  # authorized access via n8n
     elif "access_token" not in session:
-        return jsonify({"error": "Not authenticated. Use ?key=POLL_API_KEY ou faça login."}), 401
+        return jsonify({"error": "Not authenticated. Use ?key=POLL_API_KEY or log in."}), 401
 
     page_id = request.args.get("page_id") or session.get("current_page_id")
     if not page_id:
@@ -1452,20 +1651,20 @@ def poll_comments():
 
     try:
         limit = int(request.args.get("limit", 10))
-        limit = max(1, min(limit, 25))  # entre 1 e 25 posts
+        limit = max(1, min(limit, 25))  # between 1 and 25 posts
     except ValueError:
         limit = 10
 
-    # --- Controle de carga (evita timeout no Vercel) ---
-    # comments_limit = comentários por post (padrão 100; use 25 para chamadas rápidas)
+    # --- Load control (avoids Vercel timeout) ---
+    # comments_limit = comments per post (default 100; use 25 for fast calls)
     try:
         comments_limit = int(request.args.get("comments_limit", 100))
         comments_limit = max(1, min(comments_limit, 100))
     except ValueError:
         comments_limit = 100
-    # analyze=0 → pula o Gemini inteiro (resposta em segundos; sentiment vem None)
+    # analyze=0 -> skips Gemini entirely (response in seconds; sentiment comes as None)
     analyze = request.args.get("analyze", "1") != "0"
-    # max_analyze = teto de análises novas por chamada (o resto fica para a próxima)
+    # max_analyze = cap on new analyses per call (the rest waits for the next one)
     try:
         max_analyze = int(request.args.get("max_analyze", 120))
         max_analyze = max(0, min(max_analyze, 300))
@@ -1473,7 +1672,7 @@ def poll_comments():
         max_analyze = 120
 
     try:
-        # Busca os últimos N posts da página (independente da data de criação)
+        # Fetch the latest N posts from the page (regardless of creation date)
         data = fb_get(
             f"{page_id}/posts",
             {"fields": "id,message,created_time", "limit": limit},
@@ -1490,13 +1689,13 @@ def poll_comments():
         cache = load_sentiment_cache()
         pending = []
 
-        # 1) Coleta todos os comentários de todos os posts
+        # 1) Collect all comments from all posts
         for post in posts:
             post_id = post["id"]
-            post_title = (post.get("message") or "(Post de mídia)")[:80]
+            post_title = (post.get("message") or "(Media Post)")[:80]
             post_comments = []
 
-            # Get comments (limite por post via parâmetro)
+            # Get comments (per-post limit via parameter)
             data = fb_get(
                 f"{post_id}/comments",
                 {"fields": "id,from,message,created_time,like_count", "limit": comments_limit, "order": "reverse_chronological"},
@@ -1532,13 +1731,13 @@ def poll_comments():
                 "comentarios": post_comments
             })
 
-        # 2) Analisa os comentários novos em PARALELO (até 5 chamadas Gemini simultâneas)
-        #    Respeitando analyze=0 (modo rápido) e o teto max_analyze (anti-timeout)
+        # 2) Analyze new comments in PARALLEL (up to 5 simultaneous Gemini calls)
+        #    Respecting analyze=0 (fast mode) and the max_analyze cap (anti-timeout)
         total_new = 0
         if pending and analyze:
             to_analyze = pending[:max_analyze]
             for c in pending[max_analyze:]:
-                c["sentiment"] = None  # fica para a próxima chamada
+                c["sentiment"] = None  # left for the next call
             new_sentiments = analyze_many([c["message"] for c in to_analyze])
             for comment_data, sentiment in zip(to_analyze, new_sentiments):
                 comment_data["sentiment"] = sentiment
@@ -1550,7 +1749,7 @@ def poll_comments():
             save_sentiment_cache(cache)
             total_new = len(to_analyze)
 
-        # 3) Contadores por post
+        # 3) Per-post counters
         for p in posts_detail:
             counts = {"POSITIVO": 0, "NEUTRO": 0, "NEGATIVO": 0}
             for c in p["comentarios"]:
@@ -1588,7 +1787,7 @@ def poll_comments():
             "resumo_executivo": f"{total} comentários em {len(posts)} posts ({total_analisados} analisados). {sentiment_counts['POSITIVO']} positivos, {sentiment_counts['NEUTRO']} neutros, {sentiment_counts['NEGATIVO']} negativos."
         }
 
-        # Opcional: push direto ao n8n (só funciona se o n8n estiver acessível publicamente)
+        # Optional: push directly to n8n (only works if n8n is publicly reachable)
         if total_new > 0 and N8N_WEBHOOK_URL:
             send_to_n8n(summary)
 
