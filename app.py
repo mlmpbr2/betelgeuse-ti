@@ -459,6 +459,19 @@ BASE_TEMPLATE = """
         .permission-badge.orange { background: #fff3e0; color: #ef6c00; border-color: #ffcc80; }
         .permission-badge.purple { background: #f3e5f5; color: #7b1fa2; border-color: #ce93d8; }
 
+        .review-tag {
+            display: inline-block;
+            background: #fff8e1;
+            color: #f57f17;
+            padding: 2px 10px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 700;
+            border: 1px solid #ffe082;
+            margin-left: 8px;
+            vertical-align: middle;
+        }
+
         .granted-check {
             display: inline-flex;
             align-items: center;
@@ -836,7 +849,7 @@ HOME_TEMPLATE = """
                     <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Read comments with author name, message and date for moderation</p>
                 </div>
                 <div style="background: white; padding: 12px; border-radius: 8px;">
-                    <strong style="color: #1877f2;">pages_manage_metadata</strong>
+                    <strong style="color: #1877f2;">pages_manage_metadata</strong><span class="review-tag">Under App Review</span>
                     <p style="font-size: 13px; color: #65676b; margin-top: 4px;">Subscribe the Page to real-time webhooks for instant comment notifications</p>
                 </div>
             </div>
@@ -886,7 +899,7 @@ DASHBOARD_TEMPLATE = """
     {% for scope in required_scopes %}
     <div style="background: #f8f9fa; padding: 12px; border-radius: 8px; margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
         <div>
-            <strong style="color: #1877f2;">{{ scope }}</strong>
+            <strong style="color: #1877f2;">{{ scope }}</strong>{% if scope == 'pages_manage_metadata' %}<span class="review-tag">Under App Review</span>{% endif %}
             <p style="font-size: 13px; color: #65676b; margin-top: 2px;">{{ permission_info[scope].desc }}</p>
         </div>
         {% if scope in granted_permissions %}
@@ -951,7 +964,7 @@ POSTS_TEMPLATE = """
 {% endif %}
 
 <div class="card">
-    <span class="permission-badge purple">pages_manage_metadata</span>
+    <span class="permission-badge purple">pages_manage_metadata</span><span class="review-tag">Under App Review</span>
     <div class="card-title">🔔 Real-Time Notifications (Webhooks)</div>
     {% if webhook_subscribed %}
     <div class="authorized-seal">
