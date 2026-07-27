@@ -787,7 +787,7 @@ BASE_TEMPLATE = """
         {{ content | safe }}
     </div>
     <div class="footer">
-        <p>© 2026 Betelgeuse IT Services - CNPJ 51.770.524/0001-87</p>
+        <p>© 2026 Betelgeuse IT Services - CNPJ 51.770.124/0001-97</p>
         <p style="margin-top: 8px;">
             <a href="/privacy">🔒 Privacy Policy</a>
             <a href="/terms">📋 Terms of Use</a>
@@ -867,7 +867,7 @@ HOME_TEMPLATE = """
             <li>No data storage — real-time processing only</li>
             <li>Session cleared on logout</li>
             <li>Revoke access anytime in Facebook Settings</li>
-            <li>Verified company — CNPJ 51.770.524/0001-87</li>
+            <li>Verified company — CNPJ 51.770.124/0001-97</li>
         </ul>
     </div>
 </div>
@@ -1113,7 +1113,7 @@ PRIVACY_TEMPLATE = """
     <h1 style="color: #1877f2; margin-bottom: 8px;">Privacy Policy</h1>
     <p style="color: #65676b; font-size: 13px; margin-bottom: 24px;">Updated: July 27, 2026</p>
 
-    <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.524/0001-87</p>
+    <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.124/0001-97</p>
 
     <h3 style="margin: 20px 0 8px;">1. Information We Process</h3>
     <p style="margin-bottom: 12px;">Our application processes the following data <strong>only in real time</strong>:</p>
@@ -1141,7 +1141,7 @@ PRIVACY_TEMPLATE = """
     </ul>
 
     <h3 style="margin: 20px 0 8px;">6. Contact</h3>
-    <p>Betelgeuse IT Services<br>CNPJ: 51.770.524/0001-87<br>Email: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a><br>Address: Navegantes, SC, Brazil</p>
+    <p>Betelgeuse IT Services<br>CNPJ: 51.770.124/0001-97<br>Email: <a href="mailto:falecom@mariomello.com.br">falecom@mariomello.com.br</a><br>Address: Navegantes, SC, Brazil</p>
 </div>
 """
 
@@ -1150,7 +1150,7 @@ TERMS_TEMPLATE = """
     <h1 style="color: #1877f2; margin-bottom: 8px;">Terms of Use</h1>
     <p style="color: #65676b; font-size: 13px; margin-bottom: 24px;">Effective: May 30, 2026</p>
 
-    <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.524/0001-87</p>
+    <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.124/0001-97</p>
 
     <h3 style="margin: 20px 0 8px;">1. Service Description</h3>
     <p>The Betelgeuse TI Comment Moderator is a real-time tool that allows Facebook Page administrators to view and monitor public comments on posts they manage.</p>
@@ -1191,7 +1191,7 @@ DELETE_TEMPLATE = """
     <h1 style="color: #1877f2; margin-bottom: 8px;">Data Deletion Request</h1>
     <span style="display: inline-block; background: #ffebee; color: #c62828; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">LGPD / GDPR Compliant</span>
 
-    <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.524/0001-87</p>
+    <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.124/0001-97</p>
 
     <div class="alert alert-success" style="margin-bottom: 20px;">
         <strong>Good news:</strong> Our application does not store any personal data on our servers. All Facebook data is processed in real time and exists only during your active browser session.
@@ -1221,7 +1221,7 @@ DATA_USE_TEMPLATE = """
     <h1 style="color: #1877f2; margin-bottom: 8px;">Data Use Agreement</h1>
     <span style="display: inline-block; background: #e8f5e9; color: #2e7d32; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-bottom: 16px;">Meta Platform Supplemental Terms</span>
 
-    <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.524/0001-87</p>
+    <p style="margin-bottom: 16px;"><strong>Betelgeuse IT Services</strong> — CNPJ 51.770.124/0001-97</p>
 
     <h3 style="margin: 20px 0 8px;">1. Purpose of Data Use</h3>
     <p>We use Facebook Platform data exclusively for <strong>real-time comment moderation on Facebook Pages administered by the authenticated user</strong>.</p>
