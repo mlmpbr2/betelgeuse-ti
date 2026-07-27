@@ -970,10 +970,10 @@ POSTS_TEMPLATE = """
     <div class="authorized-seal">
         <div class="seal-icon">✓</div>
         <div>
-            <div class="seal-title">Authorized</div>
+            <div class="seal-title">Subscribed</div>
             <div class="seal-desc">
                 This Page is subscribed to real-time comment notifications
-                (<code>pages_manage_metadata</code> granted — subscribed to the <code>feed</code> field).
+                (<code>pages_manage_metadata</code> granted by the Page admin during login — subscribed to the <code>feed</code> field).
             </div>
         </div>
     </div>
@@ -1389,7 +1389,7 @@ def posts():
                 "comments_count": post.get("comments", {}).get("summary", {}).get("total_count", 0)
             })
 
-        # Check whether this Page is already subscribed to webhooks (Authorized seal)
+        # Check whether this Page is already subscribed to webhooks (Subscribed seal)
         webhook_subscribed = is_page_subscribed(page_id)
 
         return render_template_string(
