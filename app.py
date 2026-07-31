@@ -2,6 +2,7 @@
 Betelgeuse TI Comment Moderator + Sentiment Analysis + n8n Integration
 Flask app with Meta App Review compliance + real-time sentiment KPIs
 English UI version (App Review screencast requirement)
+MERGED: All functionality from app.py + strict token cost controls from suggested version
 """
 
 import os
@@ -216,22 +217,28 @@ def is_page_subscribed(page_id):
     return False
 
 # =============================================================================
-# SENTIMENT ANALYSIS (Gemini) - NO CACHE (Vercel read-only filesystem)
+# SENTIMENT ANALYSIS (Gemini) - STRICT COST CONTROLS (MERGED)
 # =============================================================================
 
 def analyze_sentiment(text):
-    """Analyze sentiment using Gemini API - no cache, direct call"""
+    """Analyze sentiment using Gemini API - Direct call with STRICT token limits.
+    maxOutputTokens=10 prevents runaway generation and runaway billing."""
     if not GOOGLE_API_KEY or not text:
         return "NEUTRO"
 
     try:
         url = f"{GEMINI_URL}?key={GOOGLE_API_KEY}"
+        prompt_text = f"Classifique o sentimento deste comentario em UMA palavra apenas: POSITIVO, NEUTRO ou NEGATIVO. Comentario: {text}"
         payload = {
             "contents": [{
                 "role": "user",
-                "parts": [{"text": f"Classifique o sentimento deste comentario em UMA palavra apenas: POSITIVO, NEUTRO ou NEGATIVO. Comentario: {text}"}]
+                "parts": [{"text": prompt_text}]
             }],
-            "generationConfig": {"temperature": 0}
+            # 🔒 COST TRAVA: Max 10 output tokens (prevents runaway generation)
+            "generationConfig": {
+                "temperature": 0,
+                "maxOutputTokens": 10
+            }
         }
 
         resp = requests.post(url, json=payload, timeout=30)
@@ -239,8 +246,8 @@ def analyze_sentiment(text):
 
         if "candidates" in data and data["candidates"]:
             result_text = data["candidates"][0]["content"]["parts"][0]["text"].upper().strip()
+            _log_gemini_call("single", prompt_text, result_text, 10, error=False)
 
-            # Extract sentiment from response
             if "POSITIVO" in result_text:
                 return "POSITIVO"
             elif "NEGATIVO" in result_text:
@@ -248,16 +255,17 @@ def analyze_sentiment(text):
             else:
                 return "NEUTRO"
 
-        # No candidates = API refused the call; log the real reason
-        print(f"Gemini API ERROR (single): {json.dumps(data)[:400]}")
+        err_msg = json.dumps(data)[:400]
+        print(f"Gemini API ERROR (single): {err_msg}")
+        _log_gemini_call("single", prompt_text, err_msg, 10, error=True)
         return "NEUTRO"
 
     except Exception as e:
         print(f"Gemini error: {e}")
+        _log_gemini_call("single", prompt_text, str(e)[:200], 10, error=True)
         return "NEUTRO"
 
 def get_sentiment(text, comment_id):
-    """Get sentiment - no cache, direct analysis every time"""
     return analyze_sentiment(text)
 
 # =============================================================================
@@ -269,7 +277,8 @@ BATCH_SIZE = 20
 
 def analyze_sentiments_batch(texts):
     """Analyzes up to BATCH_SIZE texts in ONE Gemini call.
-    Returns a list of sentiments in the SAME ORDER as the texts."""
+    Returns a list of sentiments in the SAME ORDER as the texts.
+    STRICT maxOutputTokens=150 prevents runaway generation."""
     if not texts:
         return []
     if not GOOGLE_API_KEY:
@@ -287,15 +296,22 @@ def analyze_sentiments_batch(texts):
         url = f"{GEMINI_URL}?key={GOOGLE_API_KEY}"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-            "generationConfig": {"temperature": 0}
+            # 🔒 COST TRAVA: Max 150 output tokens for the whole batch array
+            "generationConfig": {
+                "temperature": 0,
+                "maxOutputTokens": 150
+            }
         }
         resp = requests.post(url, json=payload, timeout=60)
         data = resp.json()
         if "candidates" not in data:
             # Shows the REAL API error in logs instead of silent fallback
-            print(f"Gemini API ERROR (batch): {json.dumps(data)[:400]}")
+            err_msg = json.dumps(data)[:400]
+            print(f"Gemini API ERROR (batch): {err_msg}")
+            _log_gemini_call("batch", prompt, err_msg, 150, error=True)
             return ["NEUTRO"] * len(texts)
         result_text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        _log_gemini_call("batch", prompt, result_text, 150, error=False)
 
         # Extracts the JSON array even if the model wraps it in ```json
         match = re.search(r"\[.*\]", result_text, re.DOTALL)
@@ -337,6 +353,95 @@ def analyze_many(texts):
 # CSS classes and display badges use English
 SENTIMENT_EN = {"POSITIVO": "positive", "NEUTRO": "neutral", "NEGATIVO": "negative"}
 SENTIMENT_DISPLAY = {"POSITIVO": "POSITIVE", "NEUTRO": "NEUTRAL", "NEGATIVO": "NEGATIVE"}
+# =============================================================================
+# TOKEN CONSUMPTION TRACKER (Gemini cost monitoring)
+# =============================================================================
+from collections import defaultdict
+import threading
+
+_TOKEN_STATS = {
+    "calls_total": 0,
+    "calls_single": 0,
+    "calls_batch": 0,
+    "tokens_input_estimated": 0,   # rough estimate: chars/4
+    "tokens_output_estimated": 0,  # rough estimate: chars/4
+    "tokens_output_limit": 0,      # sum of maxOutputTokens configured
+    "tokens_output_real": 0,       # actual response chars/4
+    "errors": 0,
+    "history": []  # last 50 calls
+}
+_TOKEN_LOCK = threading.Lock()
+
+def _estimate_tokens(text):
+    """Rough token estimate: ~4 chars per token for PT/EN."""
+    if not text:
+        return 0
+    return max(1, len(text) // 4)
+
+def _log_gemini_call(call_type, prompt_text, response_text, max_tokens_set, error=False, model=GEMINI_MODEL):
+    """Logs every Gemini call with estimated token consumption."""
+    with _TOKEN_LOCK:
+        _TOKEN_STATS["calls_total"] += 1
+        if call_type == "single":
+            _TOKEN_STATS["calls_single"] += 1
+        else:
+            _TOKEN_STATS["calls_batch"] += 1
+
+        if error:
+            _TOKEN_STATS["errors"] += 1
+
+        input_est = _estimate_tokens(prompt_text)
+        output_est = _estimate_tokens(response_text)
+
+        _TOKEN_STATS["tokens_input_estimated"] += input_est
+        _TOKEN_STATS["tokens_output_estimated"] += output_est
+        _TOKEN_STATS["tokens_output_limit"] += max_tokens_set
+        _TOKEN_STATS["tokens_output_real"] += output_est
+
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "type": call_type,
+            "model": model,
+            "input_chars": len(prompt_text),
+            "input_tokens_est": input_est,
+            "output_chars": len(response_text),
+            "output_tokens_est": output_est,
+            "max_tokens_set": max_tokens_set,
+            "efficiency": round(output_est / max(max_tokens_set, 1) * 100, 1) if max_tokens_set else 0,
+            "error": error,
+            "prompt_preview": prompt_text[:120].replace(chr(10), " ")
+        }
+        _TOKEN_STATS["history"].append(entry)
+        # Keep only last 50
+        if len(_TOKEN_STATS["history"]) > 50:
+            _TOKEN_STATS["history"] = _TOKEN_STATS["history"][-50:]
+
+        # Print to console (visible in Vercel logs or bash)
+        print(f"[GEMINI-LOG] {call_type:6} | model={model} | in={input_est:4}tok | out={output_est:4}tok "
+              f"(limit={max_tokens_set:4}) | eff={entry['efficiency']:5.1f}% | err={error} | "
+              f"preview={entry['prompt_preview'][:60]}...")
+
+def get_token_report():
+    """Returns a human-readable token consumption report."""
+    with _TOKEN_LOCK:
+        stats = dict(_TOKEN_STATS)
+        stats["history_count"] = len(stats["history"])
+
+        # Cost estimate (Gemini 3.1-flash-lite pricing as of 2026-07)
+        # Input: ~$0.075 / 1M tokens | Output: ~$0.30 / 1M tokens
+        input_cost = stats["tokens_input_estimated"] * 0.075 / 1_000_000
+        output_cost = stats["tokens_output_real"] * 0.30 / 1_000_000
+        stats["cost_usd_estimated"] = round(input_cost + output_cost, 6)
+        stats["cost_brl_estimated"] = round(stats["cost_usd_estimated"] * 5.8, 6)
+
+        # Savings from maxOutputTokens vs unconstrained (assume 8192 default)
+        unconstrained_output = stats["calls_total"] * 8192
+        savings_tokens = unconstrained_output - stats["tokens_output_limit"]
+        stats["tokens_saved_by_limits"] = max(0, savings_tokens)
+        stats["savings_percent"] = round(savings_tokens / max(unconstrained_output, 1) * 100, 1)
+
+        return stats
+
 
 # In-memory cache (Vercel filesystem is read-only)
 _SENTIMENT_CACHE = {}
@@ -1533,7 +1638,8 @@ def test_gemini():
         url = f"{GEMINI_URL}?key={GOOGLE_API_KEY}"
         payload = {
             "contents": [{"role": "user", "parts": [{"text": "Responda uma palavra: POSITIVO, NEUTRO ou NEGATIVO. Comentario: Muito top"}]}],
-            "generationConfig": {"temperature": 0}
+            # 🔒 COST TRAVA: mesmo no teste, limitamos a 10 tokens
+            "generationConfig": {"temperature": 0, "maxOutputTokens": 10}
         }
         resp = requests.post(url, json=payload, timeout=30)
         return jsonify({
@@ -1642,7 +1748,7 @@ def webhook_logs():
         return jsonify({"error": str(e)}), 500
 
 # =============================================================================
-# POLLING + SENTIMENT + n8n ROUTE
+# POLLING + SENTIMENT + n8n ROUTE (MERGED WITH STRICT COST CONTROLS)
 # =============================================================================
 
 @app.route("/poll_comments")
@@ -1651,6 +1757,7 @@ def poll_comments():
     Polling endpoint for local n8n to query Vercel.
     Auth: ?key=POLL_API_KEY  or  logged-in browser session.
     Returns: all posts in the period + comments + sentiments (detailed per post).
+    STRICT defaults to minimize token consumption.
     """
     key = request.args.get("key", "")
     if POLL_API_KEY and key == POLL_API_KEY:
@@ -1662,27 +1769,26 @@ def poll_comments():
     if not page_id:
         return jsonify({"error": "No page selected"}), 400
 
+    # 🔒 COST CONTROL: Safe default limits to prevent massive unthrottled API runs
     try:
-        limit = int(request.args.get("limit", 10))
-        limit = max(1, min(limit, 25))  # between 1 and 25 posts
+        limit = int(request.args.get("limit", 3))  # Max 3 posts default (was 10)
+        limit = max(1, min(limit, 10))
     except ValueError:
-        limit = 10
+        limit = 3
 
-    # --- Load control (avoids Vercel timeout) ---
-    # comments_limit = comments per post (default 100; use 25 for fast calls)
     try:
-        comments_limit = int(request.args.get("comments_limit", 100))
-        comments_limit = max(1, min(comments_limit, 100))
+        comments_limit = int(request.args.get("comments_limit", 15))  # 15 comments/post default (was 100)
+        comments_limit = max(1, min(comments_limit, 50))
     except ValueError:
-        comments_limit = 100
-    # analyze=0 -> skips Gemini entirely (response in seconds; sentiment comes as None)
+        comments_limit = 15
+
     analyze = request.args.get("analyze", "1") != "0"
-    # max_analyze = cap on new analyses per call (the rest waits for the next one)
+
     try:
-        max_analyze = int(request.args.get("max_analyze", 120))
-        max_analyze = max(0, min(max_analyze, 300))
+        max_analyze = int(request.args.get("max_analyze", 30))  # Max 30 sentiments/run default (was 120)
+        max_analyze = max(0, min(max_analyze, 100))
     except ValueError:
-        max_analyze = 120
+        max_analyze = 30
 
     try:
         # Fetch the latest N posts from the page (regardless of creation date)
@@ -1808,6 +1914,82 @@ def poll_comments():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+# =============================================================================
+# TOKEN CONSUMPTION REPORT ENDPOINT
+# =============================================================================
+
+@app.route("/token_report")
+def token_report():
+    """
+    Returns a detailed report of Gemini API token consumption.
+    Auth: ?key=POLL_API_KEY or logged-in session.
+    Usage: GET /token_report?key=YOUR_POLL_API_KEY
+    """
+    key = request.args.get("key", "")
+    if POLL_API_KEY and key == POLL_API_KEY:
+        pass
+    elif "access_token" not in session:
+        return jsonify({"error": "Not authenticated. Use ?key=POLL_API_KEY or log in."}), 401
+
+    report = get_token_report()
+
+    # Build a human-readable summary
+    summary = {
+        "status": "ok",
+        "report_title": "Gemini Token Consumption Report",
+        "generated_at": datetime.now().isoformat(),
+        "model_used": GEMINI_MODEL,
+        "calls": {
+            "total": report["calls_total"],
+            "single": report["calls_single"],
+            "batch": report["calls_batch"],
+            "errors": report["errors"]
+        },
+        "tokens": {
+            "input_estimated": report["tokens_input_estimated"],
+            "output_estimated": report["tokens_output_estimated"],
+            "output_limit_configured": report["tokens_output_limit"],
+            "output_real": report["tokens_output_real"]
+        },
+        "cost": {
+            "usd_estimated": report["cost_usd_estimated"],
+            "brl_estimated": report["cost_brl_estimated"],
+            "currency_note": "Based on Gemini 3.1-flash-lite pricing: $0.075/1M input, $0.30/1M output"
+        },
+        "savings_from_limits": {
+            "tokens_saved": report["tokens_saved_by_limits"],
+            "savings_percent": report["savings_percent"],
+            "note": "Compares configured maxOutputTokens vs. unconstrained default (8192 tokens)"
+        },
+        "efficiency": {
+            "average_output_vs_limit_percent": round(
+                report["tokens_output_real"] / max(report["tokens_output_limit"], 1) * 100, 1
+            ),
+            "note": "Lower % = more headroom; >100% means limit was hit (truncation risk)"
+        },
+        "last_calls": report["history"][-10:]  # last 10 calls
+    }
+
+    return jsonify(summary)
+
+@app.route("/token_report/reset")
+def token_report_reset():
+    """Reset token statistics. Protected by POLL_API_KEY."""
+    key = request.args.get("key", "")
+    if POLL_API_KEY and key == POLL_API_KEY:
+        with _TOKEN_LOCK:
+            _TOKEN_STATS["calls_total"] = 0
+            _TOKEN_STATS["calls_single"] = 0
+            _TOKEN_STATS["calls_batch"] = 0
+            _TOKEN_STATS["tokens_input_estimated"] = 0
+            _TOKEN_STATS["tokens_output_estimated"] = 0
+            _TOKEN_STATS["tokens_output_limit"] = 0
+            _TOKEN_STATS["tokens_output_real"] = 0
+            _TOKEN_STATS["errors"] = 0
+            _TOKEN_STATS["history"] = []
+        return jsonify({"status": "reset", "message": "Token statistics cleared."})
+    return jsonify({"error": "Invalid key"}), 401
 
 # =============================================================================
 # MAIN
